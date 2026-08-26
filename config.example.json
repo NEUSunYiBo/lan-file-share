@@ -1,0 +1,23 @@
+{
+  "port": 8000,
+  "password_hash": null,
+  "mounts": [
+    {
+      "id": "示例挂载点ID（12位十六进制，程序自动生成，可随意改动）",
+      "name": "示例共享文件夹",
+      "path": "D:\\example\\share"
+    }
+  ],
+  "upload_dir": "（可选）其他设备上传文件的存放目录，留空则默认在程序旁自动创建 uploads 文件夹",
+  "auto_share_uploads": true,
+  "dashboard": {
+    "cards": [
+      { "id": "type-size", "enabled": true, "order": 1 },
+      { "id": "type-pie", "enabled": true, "order": 2 },
+      { "id": "upload-trend", "enabled": true, "order": 3 },
+      { "id": "download-trend", "enabled": true, "order": 4 },
+      { "id": "recent", "enabled": true, "order": 5 },
+      { "id": "stats", "enabled": true, "order": 6 }
+    ]
+  }
+}

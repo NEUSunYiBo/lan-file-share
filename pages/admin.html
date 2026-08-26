@@ -1,0 +1,1415 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>局域网文件共享 · 管理页</title>
+<link rel="icon" href="/favicon.ico">
+<script>
+// 尽早应用主题，避免刷新时闪白（优先取用户选择，否则跟随系统）
+(function(){try{var t=localStorage.getItem("lan_share_theme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");document.documentElement.dataset.theme=t}catch(e){}})();
+</script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#f1f5f9;--panel:#fff;--line:#e2e8f0;--txt:#0f172a;--sub:#64748b;--brand:#2563eb;--brand-weak:#eff6ff;--hover-border:#bfdbfe;--danger:#ef4444;--ok:#16a34a;color-scheme:light}
+html[data-theme="dark"]{--bg:#0b1220;--panel:#141d30;--line:#2a3650;--txt:#e2e8f0;--sub:#8fa3c0;--brand:#5b9dff;--brand-weak:#1a2946;--hover-border:#33507e;--danger:#f87171;--ok:#4ade80;color-scheme:dark}
+html,body{height:100%}
+body{font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;background:var(--bg);color:var(--txt);overflow:hidden}
+#app{display:flex;height:100vh}
+.hidden{display:none!important}
+
+/* ── 左栏（宽度可拖动调节） ── */
+#sidebar{width:340px;min-width:260px;background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;overflow-y:auto;flex:none}
+/* 零占位拖动条：负 margin 抵消自身宽度，悬浮在左右栏交界处，不产生视觉间隙 */
+#resizer{width:6px;margin-right:-6px;flex:none;cursor:col-resize;background:transparent;transition:background .15s;z-index:10}
+#resizer:hover,#resizer.active{background:var(--brand)}
+/* 58px = #bcbar 实际高度（padding 12px + 控件 34px），两条横线对齐同一水平 */
+.brand{display:flex;align-items:center;gap:8px;padding:0 16px;min-height:58px;border-bottom:1px solid var(--line);flex:none}
+.brand-ico{width:22px;height:22px;flex:none;border-radius:5px}
+.brand b{font-size:17px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.side-card{padding:12px 16px}
+.side-card h2{font-size:12px;color:var(--sub);font-weight:600;letter-spacing:.05em}
+.card-head{display:flex;align-items:center;gap:6px}
+.card-head h2{flex:1}
+.add-btns{display:flex;gap:4px}
+.add-btns button{font-size:12px;padding:4px 8px}
+/* 地址 + 二维码（二维码自带白边静区，直接渲染即可，无需外框） */
+.qr-box{display:flex;justify-content:center;margin-top:6px}
+.qr-box img{width:84px;height:84px;display:block}
+.addr-list{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.addr{display:flex;align-items:center;gap:8px;background:var(--brand-weak);border:1px solid var(--line);border-radius:8px;padding:6px 10px}
+.addr.sel{border-color:var(--brand)}
+.addr .tag{font-family:Consolas,monospace;font-size:11px;color:#fff;background:var(--brand);border-radius:4px;padding:1px 7px;flex:0 1 auto;min-width:0;max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+.addr .mini{border:1px solid var(--line);background:var(--panel);border-radius:5px;cursor:pointer;color:var(--sub);font-size:11px;padding:2px 7px;flex:none}
+.addr .mini:first-of-type{margin-left:auto}
+.addr .mini:hover{color:var(--brand);border-color:var(--brand)}
+/* 挂载列表 */
+.mount-list{display:flex;flex-direction:column;gap:2px;margin-top:8px}
+.mount-item{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;cursor:pointer;font-size:13.5px}
+.mount-item:hover{background:var(--bg)}
+.mount-item.active{background:var(--brand-weak);color:var(--brand);font-weight:600}
+.mount-item .ficon{width:17px;height:17px;flex:none}
+.mount-item.active .ficon{color:var(--brand)}
+.mount-item .mname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mount-item .rm{border:none;background:none;color:var(--sub);cursor:pointer;font-size:15px;padding:2px 6px;border-radius:6px;flex:none;line-height:1}
+.mount-item .rm:hover{color:var(--danger);background:var(--bg)}
+.mount-item.dim{opacity:.55}
+.mount-item.dim:hover{opacity:.8}
+/* 已排除 */
+.ex-list{display:flex;flex-direction:column;gap:2px;margin-top:8px}
+.ex-item{display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:8px;cursor:pointer;font-size:12.5px}
+.ex-item:hover{background:var(--bg)}
+.ex-item .ex-path{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--txt)}
+.ex-item .ex-mount{color:var(--sub);flex:none}
+.ex-item .ex-restore{border:1px solid var(--line);background:var(--panel);color:var(--ok);border-radius:6px;font-size:11.5px;padding:2px 8px;cursor:pointer;flex:none}
+.ex-item .ex-restore:hover{border-color:var(--ok)}
+.empty{font-size:12px;color:var(--sub);padding:4px 8px}
+/* 设置面板（平铺展示） */
+.field{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.field input{border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:13px;outline:none;min-width:150px;background:var(--panel);color:var(--txt)}
+.field input:focus{border-color:var(--brand)}
+.status{font-size:12px;margin-top:8px}
+.status.on{color:var(--ok)}
+.status.off{color:var(--sub)}
+
+/* ── 主区 ── */
+#main{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;position:relative}
+/* min-height 与 .brand 一致：DPI 缩放下内容会撑出 57.33 之类的小数高度，统一锁定 58 保证两条下边线对齐 */
+#bcbar{display:flex;align-items:center;flex-wrap:wrap;padding:12px 18px;background:var(--panel);border-bottom:1px solid var(--line);gap:2px;min-height:58px}
+#crumbs{display:flex;align-items:center;flex-wrap:wrap;gap:2px;min-width:0;flex:1}
+.crumb{border:none;background:none;color:var(--sub);font-size:14px;cursor:pointer;padding:4px 8px;border-radius:6px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.crumb:hover{background:var(--bg)}
+.crumb:last-child{color:var(--txt);font-weight:600}
+.sep{color:var(--sub);font-size:11px}
+#searchBar{display:flex;align-items:center;gap:6px;margin-left:auto;flex:none}
+#searchScope,#sortSel{border:1px solid var(--line);border-radius:8px;padding:6px;font-size:12.5px;background:var(--panel);color:var(--sub);outline:none;cursor:pointer;flex:none}
+#searchInput{border:1px solid var(--line);border-radius:8px;padding:6px 12px;font-size:13px;outline:none;width:190px;background:var(--panel);color:var(--txt)}
+#searchInput:focus{border-color:var(--brand)}
+#refreshBtn{border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:6px 12px;cursor:pointer;font-size:13px;color:var(--sub);flex:none}
+#refreshBtn:hover{color:var(--brand);border-color:var(--brand)}
+#themeBtn{border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:13px;color:var(--sub);flex:none;display:flex;align-items:center}
+#themeBtn:hover{color:var(--brand);border-color:var(--brand)}
+#themeBtn svg{width:16px;height:16px;display:block}
+#fileList{flex:1;overflow-y:auto;min-height:0;padding:8px 12px}
+.frow{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 14px;margin-bottom:6px;cursor:pointer}
+/* 文件夹行：压缩上下内边距锁定 40px，与用户端文件夹行同高；按钮常驻、正常占位、不重叠 */
+.frow.is-dir{padding-top:4px;padding-bottom:4px;height:40px}
+.frow:hover{border-color:var(--hover-border);box-shadow:0 1px 4px rgba(37,99,235,.08)}
+/* 图标（与用户端同一套：类型 + 配色） */
+.ficon{width:20px;height:20px;flex:none}
+.ficon svg{width:100%;height:100%}
+.ficon.folder{color:#f59e0b}.ficon.video{color:#7c3aed}.ficon.audio{color:#ec4899}
+.ficon.image{color:#10b981}.ficon.text{color:#64748b}.ficon.pdf{color:#ef4444}.ficon.file{color:#94a3b8}
+.frow .fname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
+.frow .fsize,.frow .fmtime{color:var(--sub);font-size:12.5px;flex:none}
+.frow .fsize{width:80px;text-align:right}.frow .fmtime{width:130px;text-align:right}
+.frow .fmeta{color:var(--sub);font-size:12.5px;flex:none}
+/* 操作按钮常驻显示，正常占据行内空间（不悬浮、不重叠） */
+.frow .acts{flex:none;display:flex;gap:6px}
+.frow.excluded{opacity:.6}
+.frow.excluded .fname{text-decoration:line-through}
+.tag-ex{font-size:10.5px;background:#94a3b8;color:#fff;border-radius:4px;padding:1px 6px;flex:none}
+/* 行内操作按钮（与用户端 .act 同规格） */
+.act{border:1px solid var(--line);background:var(--panel);border-radius:6px;padding:4px 10px;font-size:12.5px;cursor:pointer;color:var(--txt);white-space:nowrap}
+.act:hover{border-color:var(--brand);color:var(--brand)}
+.act.ok{color:var(--ok);border-color:#86efac}
+.act.ok:hover{border-color:var(--ok);color:var(--ok)}
+.act.danger{color:var(--danger);border-color:#fecaca}
+.act.danger:hover{border-color:var(--danger);color:var(--danger)}
+html[data-theme="dark"] .act.ok{border-color:#2b5e3f}
+html[data-theme="dark"] .act.danger{border-color:#5b2b33}
+.btn{border:1px solid var(--line);background:var(--panel);border-radius:6px;padding:4px 10px;font-size:12.5px;cursor:pointer;white-space:nowrap;color:var(--txt)}
+.btn:hover{border-color:var(--brand);color:var(--brand)}
+.btn.ok{color:var(--ok);border-color:#86efac}
+.btn.ok:hover{border-color:var(--ok)}
+.btn.danger{color:var(--danger);border-color:#fecaca}
+.btn.danger:hover{border-color:var(--danger)}
+html[data-theme="dark"] .btn.ok{border-color:#2b5e3f}
+html[data-theme="dark"] .btn.danger{border-color:#5b2b33}
+.frow.flash{animation:flash 1.6s ease-out}
+@keyframes flash{0%{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-weak)}100%{border-color:var(--line);box-shadow:none}}
+.search-head{padding:8px 12px;font-size:12.5px;color:var(--sub)}
+.search-head b{color:var(--brand)}
+.search-head button{border:none;background:none;color:var(--brand);cursor:pointer;font-size:12.5px;padding:2px 6px}
+#emptyTip{padding:60px 20px;text-align:center;color:var(--sub);font-size:13.5px}
+/* 左下角统计角标：图标+数字，不透明黑灰底、贴紧左下角（不遮挡下层点击） */
+#statBadge{position:absolute;left:8px;bottom:8px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;max-width:calc(100% - 16px);padding:7px 14px;background:#0f172a;border:1px solid rgba(255,255,255,.08);border-radius:10px;color:#fff;font-size:12px;z-index:5;pointer-events:none}
+#statBadge .sitem{display:flex;align-items:center;gap:4px;font-variant-numeric:tabular-nums}
+#statBadge .ficon{width:15px;height:15px}
+#toast{position:fixed;left:50%;bottom:36px;transform:translateX(-50%) translateY(20px);background:#0f172a;color:#fff;padding:10px 20px;border-radius:10px;font-size:13.5px;opacity:0;pointer-events:none;transition:all .25s;z-index:200;max-width:80vw}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+html[data-theme="dark"] #toast{border:1px solid var(--line)}
+
+/* ── 仪表板 ── */
+/* 日志系统入口（挂载列表底部通栏按钮；正在日志页时高亮） */
+.logs-btn{width:100%;margin-top:10px;padding:7px;text-align:center;font-size:13px}
+.logs-btn.active{border-color:var(--brand);color:var(--brand);background:var(--brand-weak)}
+/* 挂载状态按钮：「共享中 / 已隐藏」，点击切换可见性（系统挂载 = 对外共享开关） */
+.mount-item .mstat-btn{border:none;border-radius:4px;padding:2px 7px;flex:none;font-size:11px;cursor:pointer;line-height:1.4;font-family:inherit}
+.mount-item .mstat-btn.on{color:var(--ok);background:rgba(22,163,74,.12)}
+.mount-item .mstat-btn.off{color:var(--sub);background:var(--bg)}
+.mount-item .mstat-btn:hover{filter:brightness(.92)}
+.up-settings{margin-top:8px;display:flex;flex-direction:column;gap:10px;font-size:13px}
+.up-toggle{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
+.up-dir-row{display:flex;gap:6px}
+.up-dir-row input{flex:1;min-width:0;font-size:12px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--txt)}
+/* 仪表板模式：隐藏搜索控件（保留主题/刷新按钮） */
+#bcbar.dash-mode #sortSel,#bcbar.dash-mode #searchScope,#bcbar.dash-mode #searchInput{display:none}
+#dashView{flex:1;overflow-y:auto;min-height:0;padding:16px 20px}
+.dash-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:12px;font-size:13px;flex-wrap:wrap}
+.dash-toolbar select{padding:5px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--txt);font-size:12.5px}
+.dash-toolbar .hint{color:var(--sub);font-size:12px}
+.dash-chip{border:1px dashed var(--line);background:transparent;border-radius:99px;color:var(--sub);font-size:12px;padding:3px 12px;cursor:pointer}
+.dash-chip:hover{color:var(--brand);border-color:var(--brand)}
+.dash-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;align-items:start}
+.dash-card{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+.dash-card.span2{grid-column:span 2}
+.dash-card-head{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--sub)}
+.dash-card-head .t{flex:1;font-weight:600}
+.dash-card-body{min-height:140px}
+.dash-chart{width:100%;height:230px}
+/* 柱状图卡片通栏（横向铺开所有柱子）；饼图卡片正常分栏（圆形图不吃宽度，通栏浪费） */
+.dash-card[data-id="type-size"]{grid-column:1/-1}
+.dash-sort{font-size:11.5px;padding:3px 10px;flex:none}            /* 柱状图排序切换按钮 */
+/* 饼图：图表 + HTML 图例弹性并排（窄屏自动上下堆叠）；图例自动换行、不限高度，全部直出 */
+.pie-flex{display:flex;flex-wrap:wrap;gap:14px;align-items:center}
+.pie-flex .dash-chart{flex:1 1 300px;min-width:240px;width:auto}
+.pie-legend{flex:1 1 260px;display:flex;flex-wrap:wrap;gap:6px 16px;font-size:11.5px;color:var(--txt)}
+.pl-item{display:flex;align-items:center;gap:5px;white-space:nowrap}
+.pl-item i{width:10px;height:10px;border-radius:2px;flex:none}
+.dash-switch{position:relative;width:34px;height:18px;flex:none;cursor:pointer}
+.dash-switch input{opacity:0;width:0;height:0}
+.dash-switch i{position:absolute;inset:0;background:var(--line);border-radius:9px;transition:.2s}
+.dash-switch i::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;background:#fff;border-radius:50%;transition:.2s}
+.dash-switch input:checked+i{background:var(--brand)}
+.dash-switch input:checked+i::after{transform:translateX(16px)}
+.dash-drag{flex:none;cursor:grab;color:var(--sub);font-size:15px;user-select:none;line-height:1}
+.dash-card.dragging{opacity:.5}
+.dash-stat-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+.dash-stat{border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.dash-stat .k{font-size:12px;color:var(--sub)}
+.dash-stat .v{font-size:20px;font-weight:700;margin-top:4px}
+.dash-stat .s{font-size:11.5px;color:var(--sub);margin-top:2px}
+.dash-recent{max-height:300px;overflow-y:auto;font-size:12.5px}
+.dash-recent table{width:100%;border-collapse:collapse}
+.dash-recent th{text-align:left;color:var(--sub);font-weight:600;padding:6px 8px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel)}
+.dash-recent td{padding:6px 8px;border-bottom:1px solid var(--line)}
+.dash-recent .fname-c{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dash-recent .tag{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11px}
+.dash-recent .tag.upload{background:#1e3a5f;color:#7db4ff}
+.dash-recent .tag.download{background:#1e4636;color:#6ee7a0}
+.dash-recent .tag.preview{background:#46351e;color:#ffd479}
+html[data-theme="dark"] .dash-recent .tag.upload{background:#1a2946;color:#7db4ff}
+html[data-theme="dark"] .dash-recent .tag.download{background:#12291e;color:#6ee7a0}
+html[data-theme="dark"] .dash-recent .tag.preview{background:#2e2413;color:#ffd479}
+
+/* 窄窗口：上下堆叠，左栏收窄 */
+@media (max-width:900px){
+  #app{flex-direction:column}
+  #sidebar{width:auto!important;min-width:0!important;max-height:44vh;border-right:none;border-bottom:1px solid var(--line)}
+  #resizer{display:none}
+  #searchInput{width:130px}
+  #searchBar{flex-wrap:wrap}
+  .dash-card.span2{grid-column:span 1}
+  #dashView{padding:12px 10px}
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- ── 左栏：管理面板 ── -->
+  <aside id="sidebar">
+    <div class="brand">
+      <img class="brand-ico" src="/favicon.ico" alt="" onerror="this.style.display='none'">
+      <b>局域网文件共享 · 管理页</b>
+    </div>
+
+    <div class="side-card">
+      <h2>访问地址</h2>
+      <div class="qr-box hidden" id="qrBox" title="手机扫码访问">
+        <img id="qrImg" alt="访问二维码">
+      </div>
+      <div class="addr-list" id="addrList"></div>
+    </div>
+
+    <div class="side-card">
+      <div class="card-head">
+        <h2>共享挂载</h2>
+        <div class="add-btns">
+          <button class="btn" id="pickFolderBtn" title="弹出系统窗口选择文件夹">＋ 文件夹</button>
+          <button class="btn" id="pickFilesBtn" title="弹出系统窗口选择文件">＋ 文件</button>
+        </div>
+      </div>
+      <div class="mount-list" id="mountList"></div>
+      <div id="mountEmpty" class="empty hidden">还没有挂载，点上方按钮添加。</div>
+      <button class="btn logs-btn" id="navDashBtn" title="查看日志与统计仪表板">日志系统</button>
+    </div>
+
+    <div class="side-card">
+      <h2>上传文件夹</h2>
+      <div class="up-settings">
+        <label class="up-toggle">
+          <input type="checkbox" id="autoShareChk">
+          对外共享（其他设备可见）
+        </label>
+        <div class="up-dir-row">
+          <input id="uploadDirInput" placeholder="接收目录" readonly title="上传文件的保存位置">
+          <button class="btn" id="editUploadDirBtn">修改</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="side-card">
+      <h2>访问密码</h2>
+      <div class="status off" id="pwStatus"></div>
+      <div class="field">
+        <input id="pwInput" type="password" placeholder="访问密码" autocomplete="new-password">
+        <button class="btn" id="savePwBtn">保存</button>
+        <button class="btn danger" id="clearPwBtn">关闭密码</button>
+      </div>
+    </div>
+
+    <div class="side-card">
+      <h2>服务端口</h2>
+      <div class="field">
+        <input id="portInput" type="number" min="1" max="65535" style="min-width:110px">
+        <button class="btn" id="savePortBtn">保存端口</button>
+      </div>
+      <div class="empty">修改端口后服务自动重启，本页跳转新地址。</div>
+    </div>
+
+    <!-- 已排除：放在侧栏最底部（内容多时可整栏滚动） -->
+    <div class="side-card" id="excludedBox">
+      <h2>已排除（<span id="excludedCount">0</span>）</h2>
+      <div class="ex-list" id="excludedList"></div>
+    </div>
+  </aside>
+
+  <div id="resizer" title="拖动调节左栏宽度"></div>
+
+  <!-- ── 右侧：文件浏览器 ── -->
+  <main id="main">
+    <div id="bcbar">
+      <div id="crumbs"></div>
+      <div id="searchBar">
+        <select id="sortSel" title="排序方式">
+          <option value="name-asc">名称 ↑</option>
+          <option value="name-desc">名称 ↓</option>
+          <option value="size-asc">大小 ↑</option>
+          <option value="size-desc">大小 ↓</option>
+          <option value="mtime-desc">最新优先</option>
+          <option value="mtime-asc">最旧优先</option>
+        </select>
+        <select id="searchScope" title="搜索范围">
+          <option value="local">本目录</option>
+          <option value="global">全部挂载</option>
+        </select>
+        <input id="searchInput" placeholder="搜索文件名…" autocomplete="off">
+        <button class="btn" id="themeBtn" title="切换深色 / 浅色主题"></button>
+        <button class="btn" id="refreshBtn">刷新</button>
+      </div>
+    </div>
+    <div id="fileList"></div>
+    <div id="emptyTip" class="hidden"></div>
+    <div id="dashView" class="hidden"></div>
+    <div id="statBadge" class="hidden"></div>
+  </main>
+</div>
+
+<div id="toast"></div>
+
+<script src="/echarts.min.js"></script>
+<script>
+"use strict";
+
+const $ = (s) => document.querySelector(s);
+const st = {
+  port: 8000, need_password: false, ips: [], mounts: [],
+  cur: { share: null, path: [] },   // 当前浏览位置（挂载id + 相对路径段）
+  items: [],                          // 当前目录条目（admin list 返回）
+  highlight: null,                   // 加载后需要闪烁高亮的文件名（从排除区/搜索结果跳入）
+  searchResults: null,               // 非空 = 全局搜索结果模式
+};
+
+/* 文件类型判断 + 内联图标（与用户端 browse.html 同一套） */
+function kindOf(name) {
+  const ext = (name.split(".").pop() || "").toLowerCase();
+  if (["mp4","webm","mkv","mov","m4v","avi"].includes(ext)) return "video";
+  if (["mp3","flac","wav","m4a","aac","ogg","opus","wma"].includes(ext)) return "audio";
+  if (["jpg","jpeg","png","gif","webp","bmp","svg","ico","avif","heic"].includes(ext)) return "image";
+  if (ext === "pdf") return "pdf";
+  if (["txt","md","log","py","js","ts","html","htm","css","json","xml","yml","yaml","csv",
+       "ini","cfg","conf","sh","bat","ps1","c","cpp","h","hpp","java","rs","go","sql","toml"].includes(ext)) return "text";
+  return "other";
+}
+const ICONS = {
+  folder: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z"/></svg>',
+  file:   '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm0 2.5L18.5 9H14V4.5z"/></svg>',
+  video:  '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5h18a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm7 3v8l7-4-7-4z"/></svg>',
+  audio:  '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/></svg>',
+  image:  '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm0 14l4.5-5.5 3 4 2.5-3L19 17H5zm10.5-9a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z"/></svg>',
+  text:   '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 2h9l5 5v15H6V2zm8 1.5V9h6L14 3.5zM8 12h8v1.5H8V12zm0 3h8v1.5H8V15zm0 3h5v1.5H8V18z"/></svg>',
+  pdf:    '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm0 2.5L18.5 9H14V4.5z"/></svg>',
+};
+function iconHtml(name, isDir) {
+  const kind = isDir ? "folder" : kindOf(name);
+  return '<span class="ficon ' + kind + '">' + (ICONS[kind] || ICONS.file) + "</span>";
+}
+
+/* 左下角统计角标：文件夹数 + 各类型文件数（数量为 0 的种类不显示） */
+const KIND_NAMES = { video: "视频", audio: "音频", image: "图片", pdf: "PDF", text: "文本", other: "其他" };
+function updateStatBadge(items) {
+  const box = $("#statBadge");
+  if (!items || !items.length) { box.classList.add("hidden"); return; }
+  const folders = items.filter(i => i.is_dir).length;
+  const kinds = {};
+  for (const it of items) {
+    if (it.is_dir) continue;
+    const k = kindOf(it.name);
+    kinds[k] = (kinds[k] || 0) + 1;
+  }
+  let html = "";
+  if (folders) html += '<span class="sitem" title="文件夹"><span class="ficon folder">' + ICONS.folder + "</span>" + folders + "</span>";
+  for (const k of ["video", "audio", "image", "pdf", "text", "other"]) {
+    if (!kinds[k]) continue;   // 0 数量的种类不显示
+    html += '<span class="sitem" title="' + KIND_NAMES[k] + '"><span class="ficon ' + k + '">' + (ICONS[k] || ICONS.file) + "</span>" + kinds[k] + "</span>";
+  }
+  if (!html) { box.classList.add("hidden"); return; }
+  box.innerHTML = html;
+  box.classList.remove("hidden");
+}
+
+let toastTimer = null;
+function toast(msg) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 2500);
+}
+
+async function api(path, opts) {
+  const resp = await fetch(path, opts);
+  let data = {};
+  try { data = await resp.json(); } catch (_) {}
+  if (!resp.ok) throw new Error(data.error || ("请求失败 " + resp.status));
+  return data;
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function fmtSize(n) {
+  if (!n) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0, v = n;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return (v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)) + " " + units[i];
+}
+function fmtDate(ts) {
+  const d = new Date(ts * 1000);
+  const p = (x) => String(x).padStart(2, "0");
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+}
+
+/* ─────────── 左栏渲染 ─────────── */
+
+async function loadState(keepList) {
+  try {
+    const s = await api("/admin/api/state");
+    st.port = s.port;
+    st.need_password = s.need_password;
+    st.ips = s.ips || [];
+    st.mounts = s.mounts || [];
+    st.auto_share_uploads = !!s.auto_share_uploads;
+    renderSidebar();
+    // 当前挂载被移除时回到未选择状态
+    if (st.cur.share && !st.mounts.some(m => m.id === st.cur.share)) {
+      st.cur = { share: null, path: [] };
+      st.items = []; st.searchResults = null;
+    }
+    if (!keepList) renderList(); else renderCrumbs();
+  } catch (e) {
+    toast("加载失败：" + e.message);
+  }
+}
+
+/* 当前二维码对应的地址（点地址行切换；默认第一个局域网地址） */
+let qrSelIp = null;
+
+function renderSidebar() {
+  // 访问地址 + 二维码（去掉"本机"地址；手机扫码直接进入用户端页面）
+  const list = $("#addrList");
+  list.innerHTML = "";
+  const addrs = st.ips.map(ip => ({ url: "http://" + ip + ":" + st.port + "/", tag: ip }));
+  if (!addrs.some(a => a.tag === qrSelIp)) qrSelIp = addrs.length ? addrs[0].tag : null;
+  const sel = addrs.find(a => a.tag === qrSelIp) || null;
+  const qrBox = $("#qrBox");
+  if (sel) {
+    qrBox.classList.remove("hidden");
+    const img = $("#qrImg");
+    const src = "/admin/api/qr?ip=" + encodeURIComponent(sel.tag);
+    if (img.getAttribute("src") !== src) img.src = src;   // 避免重复请求
+    img.onerror = () => qrBox.classList.add("hidden");    // 未装 qrcode 库时隐藏
+  } else {
+    qrBox.classList.add("hidden");
+  }
+  addrs.forEach(a => {
+    const div = document.createElement("div");
+    div.className = "addr" + (a === sel ? " sel" : "");
+    // 蓝底白字直接显示完整访问地址（选项框中地址全文仅此一处，不重复拼接）
+    div.innerHTML = '<span class="tag" title="' + esc(a.tag) + '">' + esc(a.url) + "</span>" +
+      '<button class="mini" title="复制完整地址">复制</button><button class="mini" title="在浏览器打开">打开</button>';
+    div.querySelector(".mini:last-child").onclick = () => window.open(a.url, "_blank");
+    div.querySelector(".mini:first-of-type").onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(a.url);
+        toast("已复制：" + a.url);
+      } catch (_) { toast("复制失败，请手动复制"); }
+    };
+    // 点击蓝底徽标切换二维码；按钮不触发
+    div.querySelector(".tag").onclick = () => {
+      if (qrSelIp === a.tag) return;
+      qrSelIp = a.tag;
+      renderSidebar();
+    };
+    list.appendChild(div);
+  });
+
+  // 挂载列表（悬停显示完整路径；系统挂载「来自设备的上传」置顶）。
+  // 每项带「共享中 / 已隐藏」状态按钮，点击切换：
+  // 普通挂载 = 暂时隐藏（用户端不可见、行半透明，随时恢复）；
+  // 系统挂载 = 上传文件夹对外共享开关（与「上传文件夹」模块的复选框同步）
+  const ml = $("#mountList");
+  ml.innerHTML = "";
+  $("#mountEmpty").classList.toggle("hidden", st.mounts.some(m => !m.system));
+  for (const m of st.mounts) {
+    const sys = !!m.system;
+    const on = sys ? st.auto_share_uploads : !m.hidden;
+    const div = document.createElement("div");
+    div.className = "mount-item" + (st.cur.share === m.id ? " active" : "") +
+      (!sys && !on ? " dim" : "");
+    div.title = m.path;   // 需求：悬停显示文件/文件夹完整地址
+    const tip = on
+      ? (sys ? "点击关闭对外共享（仅本机可见）" : "点击暂时隐藏（用户端不可见，随时可恢复）")
+      : "点击恢复对外共享";
+    div.innerHTML = iconHtml(m.name, m.type === "dir") +
+      '<span class="mname">' + esc(m.name) + "</span>" +
+      '<button class="mstat-btn ' + (on ? "on" : "off") + '" title="' + tip + '">' +
+      (on ? "共享中" : "已隐藏") + "</button>" +
+      (sys ? "" : '<button class="rm" title="移除整个挂载">✕</button>');
+    div.onclick = (e) => {
+      if (e.target.closest(".rm") || e.target.closest(".mstat-btn")) return;
+      navigate(m.id, []);
+    };
+    div.querySelector(".mstat-btn").onclick = async () => {
+      if (sys) { setUploadsShare(!st.auto_share_uploads); return; }
+      try {
+        const j = await api("/admin/api/mount/" + encodeURIComponent(m.id) + "/hidden", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ hidden: on }),
+        });
+        toast(j.hidden ? "已隐藏：" + m.name + "（用户端不可见）" : "已恢复共享：" + m.name);
+        loadState(true);
+      } catch (e) { toast("操作失败：" + e.message); }
+    };
+    if (!sys) {
+      div.querySelector(".rm").onclick = async () => {
+        if (!confirm('移除挂载「' + m.name + '」？\n（只是取消共享，磁盘文件不受影响）')) return;
+        try {
+          await api("/admin/api/mount/" + encodeURIComponent(m.id), { method: "DELETE" });
+          toast("已移除挂载：" + m.name);
+          loadState();
+        } catch (e) { toast("移除失败：" + e.message); }
+      };
+    }
+    ml.appendChild(div);
+  }
+
+  // 已排除区（平铺）
+  let count = 0;
+  const ex = $("#excludedList");
+  ex.innerHTML = "";
+  for (const m of st.mounts) {
+    for (const rel of (m.excluded || [])) {
+      count++;
+      const parts = rel.split("/");
+      const name = parts.pop();
+      const dir = parts.join("/");
+      const div = document.createElement("div");
+      div.className = "ex-item";
+      div.title = m.name + " / " + rel;
+      div.innerHTML = '<span class="ex-mount">' + esc(m.name) + '</span><span class="ex-path">' + esc(dir ? dir + "/" : "") + "<b>" + esc(name) + "</b></span>" +
+        '<button class="ex-restore">恢复</button>';
+      div.onclick = (e) => {
+        if (e.target.closest(".ex-restore")) return;
+        // 跳到该项所在目录并高亮
+        st.highlight = name;
+        navigate(m.id, parts);
+      };
+      div.querySelector(".ex-restore").onclick = async () => {
+        await restoreItem(m.id, rel);
+      };
+      ex.appendChild(div);
+    }
+  }
+  $("#excludedCount").textContent = count;
+  $("#excludedBox").classList.toggle("hidden", count === 0);
+
+  // 密码状态
+  const pwStatus = $("#pwStatus");
+  pwStatus.textContent = st.need_password ? "当前状态：已开启密码保护" : "当前状态：未开启（局域网内可直接访问）";
+  pwStatus.className = "status " + (st.need_password ? "on" : "off");
+  $("#portInput").value = st.port;
+}
+
+/* ─────────── 右侧浏览器 ─────────── */
+
+// 应用一次目录跳转（不碰浏览器历史）
+function applyNav(share, path) {
+  st.cur = { share, path: [...path] };
+  st.searchResults = null;
+  $("#searchInput").value = "";
+  renderSidebar();
+  loadList();
+}
+
+// 主动导航（挂载点击 / 进入目录 / 面包屑 / 排除区 / 搜索结果）：压入历史，
+// 侧键后退、前进可在目录间穿梭；在日志视图时点击挂载会先回到文件视图
+function navigate(share, path) {
+  history.pushState({ share, path: [...path] }, "", location.pathname + location.search);
+  if (dash.view === "dash") {   // 先退出日志视图（清掉 #logs），再加载目录
+    setDashVisible(false);
+    dash.view = "files";
+    dashStopPolling();
+  }
+  applyNav(share, path);
+}
+
+// 侧键 / 浏览器后退前进 / 手机手势 / 刷新后的首次 popstate：
+// 以当前 URL 为准（#logs → 日志页），再按历史条目恢复目录
+window.addEventListener("popstate", (e) => {
+  if (location.hash === "#logs") {          // URL 指向日志页（含刷新场景）
+    if (dash.view !== "dash") enterDash();
+    return;
+  }
+  const snap = e.state;
+  if (snap && snap.dash) {                   // 历史条目标记为日志页
+    if (dash.view !== "dash") enterDash();
+    return;
+  }
+  if (dash.view === "dash") {                // 从日志页后退回文件视图
+    setDashVisible(false);
+    dash.view = "files";
+    dashStopPolling();
+  }
+  if (snap && snap.share) applyNav(snap.share, snap.path || []);
+  else if (snap) applyNav(null, []);   // snap 为 null（同文档 hash 条目）时保持当前内容
+});
+
+async function loadList() {
+  if (dash.view === "dash") return;   // 日志视图：不加载列表、不覆盖面包屑
+  renderCrumbs();
+  if (!st.cur.share) { st.items = []; renderList(); return; }
+  const mount = st.mounts.find(m => m.id === st.cur.share);
+  if (!mount) { st.items = []; renderList(); return; }
+  // 单文件挂载：不能排除（根即文件），只显示自身
+  if (mount.type === "file") {
+    st.items = [{ name: mount.name, size: 0, mtime: 0, is_dir: false, excluded: false, single: true }];
+    renderList();
+    return;
+  }
+  try {
+    const q = "?share=" + encodeURIComponent(st.cur.share) +
+      "&path=" + encodeURIComponent(st.cur.path.join("/"));
+    st.items = await api("/admin/api/list" + q);
+    renderList();
+  } catch (e) {
+    st.items = [];
+    renderList();
+    toast("读取目录失败：" + e.message);
+  }
+}
+
+function renderCrumbs() {
+  const bar = $("#crumbs");
+  bar.innerHTML = "";
+  const mount = st.mounts.find(m => m.id === st.cur.share);
+  if (!mount) {
+    bar.innerHTML = '<span class="crumb" style="cursor:default">选择左侧挂载开始浏览</span>';
+    return;
+  }
+  const root = document.createElement("button");
+  root.className = "crumb";
+  root.textContent = mount.name;
+  root.onclick = () => navigate(mount.id, []);
+  bar.appendChild(root);
+  st.cur.path.forEach((seg, i) => {
+    const sep = document.createElement("span");
+    sep.className = "sep"; sep.textContent = "›";
+    bar.appendChild(sep);
+    const b = document.createElement("button");
+    b.className = "crumb";
+    b.textContent = seg;
+    b.onclick = () => navigate(mount.id, st.cur.path.slice(0, i + 1));
+    bar.appendChild(b);
+  });
+}
+
+/* 排序：目录恒在文件前，各自内部按所选字段排 */
+function sortItems(items) {
+  const mode = $("#sortSel").value || "name-asc";
+  const [field, dir] = mode.split("-");
+  const sign = dir === "desc" ? -1 : 1;
+  return [...items].sort((a, b) => {
+    if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+    let r;
+    if (field === "size") r = (a.size || 0) - (b.size || 0);
+    else if (field === "mtime") r = (a.mtime || 0) - (b.mtime || 0);
+    else r = a.name.localeCompare(b.name, "zh-CN");
+    return r * sign;
+  });
+}
+
+function renderList() {
+  // 日志视图守卫：异步回调（loadState 等）晚于 enterDash 完成时，
+  // 不能把 emptyTip 重新显示出来叠在仪表板上（刷新日志页时出现过遮挡重叠）
+  if (dash.view === "dash") return;
+  const fl = $("#fileList");
+  const tip = $("#emptyTip");
+  fl.innerHTML = "";
+
+  // 全局搜索结果模式
+  if (st.searchResults) {
+    const head = document.createElement("div");
+    head.className = "search-head";
+    head.innerHTML = '在 <b>' + esc(st.searchResults.scopeName) + '</b> 中搜到 <b>' + st.searchResults.items.length + '</b> 条 <button id="clearSearch">返回目录</button>';
+    fl.appendChild(head);
+    const sorted = sortItems(st.searchResults.items);
+    updateStatBadge(sorted);
+    for (const item of sorted) {
+      fl.appendChild(makeResultRow(item));
+    }
+    tip.classList.add("hidden");
+    return;
+  }
+
+  if (!st.cur.share) {
+    tip.textContent = "点击左侧「共享挂载」中的条目，在这里浏览和管理它的内容。";
+    tip.classList.remove("hidden");
+    updateStatBadge([]);
+    return;
+  }
+
+  // 局部过滤
+  const q = $("#searchInput").value.trim().toLowerCase();
+  const items = sortItems(q ? st.items.filter(i => i.name.toLowerCase().includes(q)) : st.items);
+  updateStatBadge(items);
+
+  if (!items.length) {
+    tip.textContent = q ? "当前目录没有匹配「" + q + "」的内容。" : "这个目录是空的。";
+    tip.classList.remove("hidden");
+    return;
+  }
+  tip.classList.add("hidden");
+
+  const mount = st.mounts.find(m => m.id === st.cur.share);
+  for (const it of items) {
+    const rel = (st.cur.path.length ? st.cur.path.join("/") + "/" : "") + it.name;
+    fl.appendChild(makeRow(it, rel, mount));
+  }
+}
+
+function makeRow(it, rel, mount) {
+  const row = document.createElement("div");
+  row.className = "frow" + (it.is_dir ? " is-dir" : "") + (it.excluded ? " excluded" : "");
+
+  let acts = "";
+  if (it.excluded) {
+    acts = '<button class="act ok" data-act="restore">恢复共享</button>';
+  } else if (!it.single) {
+    acts = '<button class="act danger" data-act="exclude">取消共享</button>';
+  }
+
+  row.innerHTML = iconHtml(it.name, it.is_dir) +
+    '<span class="fname" title="' + esc(it.name) + '">' + esc(it.name) + "</span>" +
+    (it.excluded ? '<span class="tag-ex">已排除</span>' : "") +
+    '<span class="fsize">' + (it.is_dir ? "—" : fmtSize(it.size)) + '</span>' +
+    '<span class="fmtime">' + fmtDate(it.mtime) + "</span>" +
+    '<span class="acts">' + acts + "</span>";
+
+  // 目录点击进入（排除的目录管理员仍可进入查看）
+  row.onclick = (e) => {
+    const act = e.target.closest("[data-act]");
+    if (act) {
+      e.stopPropagation();
+      const a = act.dataset.act;
+      if (a === "exclude") excludeItem(rel, it.name);
+      else if (a === "restore") restoreItem(st.cur.share, rel);
+      return;
+    }
+    if (it.is_dir && !it.single) {
+      navigate(st.cur.share, [...st.cur.path, it.name]);
+    }
+  };
+
+  // 从排除区/搜索跳入时闪烁高亮
+  if (st.highlight && it.name === st.highlight) {
+    st.highlight = null;
+    row.classList.add("flash");
+    setTimeout(() => row.scrollIntoView({ block: "center" }), 50);
+  }
+  return row;
+}
+
+function makeResultRow(item) {
+  const row = document.createElement("div");
+  row.className = "frow";
+  const dirOf = item.path.includes("/") ? item.path.slice(0, item.path.lastIndexOf("/")) : "";
+  row.innerHTML = iconHtml(item.name, item.is_dir) +
+    '<span class="fname">' + esc(item.name) + "</span>" +
+    '<span class="fmeta">' + esc(item.share_name + " · " + (dirOf || "根目录")) + "</span>";
+  row.onclick = () => {
+    const parts = item.path ? item.path.split("/") : [];
+    if (item.is_dir) {
+      navigate(item.share, parts);
+    } else {
+      const name = parts.pop();
+      st.highlight = name;
+      navigate(item.share, parts);
+    }
+  };
+  return row;
+}
+
+/* ─────────── 排除 / 恢复 ─────────── */
+
+async function excludeItem(rel, displayName) {
+  try {
+    await api("/admin/api/exclude", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ share: st.cur.share, path: rel }),
+    });
+    toast("已取消共享：" + (displayName || rel) + "（用户端不再可见）");
+    loadState(true);   // 刷新左栏排除区 + 当前列表
+    loadList();
+  } catch (e) { toast("操作失败：" + e.message); }
+}
+
+async function restoreItem(share, rel) {
+  try {
+    await api("/admin/api/exclude", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ share, path: rel }),
+    });
+    toast("已恢复共享：" + rel);
+    loadState(true);
+    if (st.cur.share === share || !st.cur.share) loadList();
+    else loadList();
+  } catch (e) { toast("操作失败：" + e.message); }
+}
+
+/* ─────────── 搜索 ─────────── */
+
+let searchTimer = null;
+$("#searchInput").addEventListener("input", () => {
+  // 本目录模式：即时过滤当前目录（在搜索结果中输入则退回目录模式）
+  if ($("#searchScope").value !== "local") return;
+  st.searchResults = null;
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(renderList, 120);
+});
+
+async function globalSearch() {
+  const q = $("#searchInput").value.trim();
+  if (!q) { st.searchResults = null; renderList(); return; }
+  try {
+    const items = await api("/api/search?q=" + encodeURIComponent(q));
+    st.searchResults = { items, scopeName: "全部挂载" };
+    renderList();
+  } catch (e) { toast("搜索失败：" + e.message); }
+}
+$("#searchInput").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter") return;
+  e.preventDefault();
+  if ($("#searchScope").value === "local") { st.searchResults = null; renderList(); }
+  else globalSearch();
+});
+// 切换搜索范围后立即按新范围执行当前关键字
+$("#searchScope").addEventListener("change", () => {
+  const q = $("#searchInput").value.trim();
+  if (!q) return;
+  if ($("#searchScope").value === "local") { st.searchResults = null; renderList(); }
+  else globalSearch();
+});
+
+$("#refreshBtn").onclick = () => {
+  if (dash.view === "dash") { dashRefresh(); return; }
+  st.searchResults = null;
+  loadState(true);
+  loadList();
+};
+
+// 排序切换：立即按新顺序重渲当前列表（含搜索结果），偏好存 localStorage（与用户端共享）
+$("#sortSel").value = localStorage.getItem("lan_share_sort") || "name-asc";
+$("#sortSel").addEventListener("change", () => {
+  localStorage.setItem("lan_share_sort", $("#sortSel").value);
+  renderList();
+});
+
+/* ─────────── 添加挂载（系统选择窗口） ─────────── */
+
+async function pickAndMount(kind) {
+  const url = kind === "folder" ? "/admin/api/pick-folder" : "/admin/api/pick-files";
+  const btn = kind === "folder" ? $("#pickFolderBtn") : $("#pickFilesBtn");
+  btn.disabled = true;
+  try {
+    toast("请在电脑上完成选择…");
+    const picked = await api(url, { method: "POST" });
+    if (!picked.ok || !(picked.paths || []).length) {
+      toast("已取消选择");
+      return;
+    }
+    await api("/admin/api/mount", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paths: picked.paths }),
+    });
+    toast("挂载成功");
+    loadState();
+  } catch (e) {
+    toast("操作失败：" + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+$("#pickFolderBtn").onclick = () => pickAndMount("folder");
+$("#pickFilesBtn").onclick = () => pickAndMount("files");
+
+/* ─────────── 密码 / 端口 ─────────── */
+
+$("#savePwBtn").onclick = async () => {
+  const pw = $("#pwInput").value;
+  if (!pw) { toast("请输入密码"); return; }
+  try {
+    await api("/admin/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: pw }),
+    });
+    $("#pwInput").value = "";
+    toast("密码已开启");
+    loadState(true);
+  } catch (e) { toast("保存失败：" + e.message); }
+};
+
+$("#clearPwBtn").onclick = async () => {
+  try {
+    await api("/admin/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: "" }),
+    });
+    toast("密码已关闭");
+    loadState(true);
+  } catch (e) { toast("操作失败：" + e.message); }
+};
+
+$("#savePortBtn").onclick = async () => {
+  const port = parseInt($("#portInput").value, 10);
+  if (!(port >= 1 && port <= 65535)) { toast("端口必须是 1-65535 的整数"); return; }
+  if (port === st.port) { toast("端口未变化"); return; }
+  try {
+    const r = await api("/admin/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ port }),
+    });
+    if (r.restarted) {
+      alert("端口已修改为 " + port + "，服务正在重启。\n本页面即将跳转到新地址。");
+      location.href = "http://localhost:" + port + "/admin";
+    } else {
+      toast("端口已保存");
+      loadState(true);
+    }
+  } catch (e) { toast("保存失败：" + e.message); }
+};
+
+/* ─────────── 主题（与用户端共享偏好键） ─────────── */
+
+const SUN_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>';
+const MOON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
+function applyThemeIcon() {
+  $("#themeBtn").innerHTML = document.documentElement.dataset.theme === "dark" ? SUN_SVG : MOON_SVG;
+}
+$("#themeBtn").onclick = () => {
+  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  localStorage.setItem("lan_share_theme", next);
+  applyThemeIcon();
+  if (dash.view === "dash") dashRefresh();   // 图表配色跟随主题
+};
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (e) => {
+  if (!localStorage.getItem("lan_share_theme")) {
+    document.documentElement.dataset.theme = e.matches ? "dark" : "light";
+    applyThemeIcon();
+  }
+});
+applyThemeIcon();
+
+/* ─────────── 左栏宽度拖动调节 ─────────── */
+
+(function initResizer() {
+  const W_KEY = "lan_share_admin_sidebar_w";
+  const MIN = 260, MAX = 600;
+  const sidebar = $("#sidebar");
+  const apply = (w) => {
+    w = Math.round(Math.min(MAX, Math.max(MIN, w)));
+    sidebar.style.width = w + "px";
+    sidebar.style.flex = "none";
+  };
+  const saved = parseInt(localStorage.getItem(W_KEY) || "", 10);
+  if (saved >= MIN && saved <= MAX) apply(saved);
+
+  const resizer = $("#resizer");
+  let dragging = false;
+  resizer.addEventListener("mousedown", (e) => {
+    dragging = true;
+    resizer.classList.add("active");
+    document.body.style.userSelect = "none";
+    e.preventDefault();
+  });
+  window.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    apply(e.clientX);
+  });
+  window.addEventListener("mouseup", () => {
+    if (!dragging) return;
+    dragging = false;
+    resizer.classList.remove("active");
+    document.body.style.userSelect = "";
+    localStorage.setItem(W_KEY, String(sidebar.offsetWidth));
+  });
+  // 双击恢复默认宽度
+  resizer.addEventListener("dblclick", () => {
+    apply(340);
+    localStorage.setItem(W_KEY, "340");
+  });
+})();
+
+/* ─────────── 日志 / 统计仪表板 ─────────── */
+
+const DASH_CARDS = [
+  { id: "stats", title: "总览" },
+  { id: "type-pie", title: "文件类型占比" },
+  { id: "type-size", title: "类型大小分布" },
+  { id: "upload-trend", title: "上传趋势" },
+  { id: "download-trend", title: "下载趋势" },
+  { id: "recent", title: "最近传输" },
+];
+/* 图表调色板（扇区与 HTML 图例同源同索引，保证颜色一一对应） */
+const DASH_COLORS = ["#5470c6", "#91cc75", "#fac858", "#ee6666", "#73c0de",
+  "#3ba272", "#fc8452", "#9a60b4", "#ea7ccc", "#2f9e93"];
+
+const dash = {
+  view: "files",           // "files" | "dash"
+  cards: [],               // 服务端返回的卡片配置 [{id, enabled, order}]
+  charts: {},              // id -> echarts 实例
+  timer: null,             // 轮询句柄
+  range: localStorage.getItem("lan_share_dash_range") || "24h",
+  sizeSort: localStorage.getItem("lan_share_size_sort") || "name",   // 柱状图排序：name=名称 | size=大小
+};
+
+function dashTextColor() {
+  return document.documentElement.dataset.theme === "dark" ? "#8fa3c0" : "#64748b";
+}
+function dashSplitColor() {
+  return document.documentElement.dataset.theme === "dark" ? "#2a3650" : "#e2e8f0";
+}
+/* 坐标轴公共样式（跟随主题） */
+function dashAxis() {
+  return {
+    axisLabel: { color: dashTextColor() },
+    axisLine: { lineStyle: { color: dashSplitColor() } },
+    splitLine: { lineStyle: { color: dashSplitColor() } },
+  };
+}
+
+/* 图表高度按种类数分档：少→矮、多→高，紧凑且无大片空白 */
+function chartHeight(n) {
+  if (n <= 0) return 120;      // 无数据：极小占位
+  if (n <= 8) return 170;      // 三五个种类：明显缩小
+  if (n <= 25) return 230;     // 中等
+  return 300;                  // 很多类：加大但有限
+}
+
+function dashInitChart(id) {
+  const el = document.querySelector('.dash-card[data-id="' + id + '"] .dash-chart');
+  if (!el || !window.echarts) return;
+  if (dash.charts[id]) dash.charts[id].dispose();
+  dash.charts[id] = echarts.init(el);   // 不用内置主题：背景透明，颜色由选项控制
+}
+
+async function loadDashboardConfig() {
+  try {
+    const j = await api("/admin/api/dashboard-config");
+    dash.cards = j.cards || [];
+  } catch (_) { dash.cards = []; }
+}
+
+function dashRender() {
+  const view = $("#dashView");
+  const cards = dash.cards.length ? dash.cards
+    : DASH_CARDS.map((c, i) => ({ id: c.id, enabled: true, order: i + 1 }));
+  // 已停用的卡片在工具栏显示为可点击的 chip，点击重新启用（避免关闭后无法找回）
+  const offChips = cards.filter(c => !c.enabled).map(c => {
+    const def = DASH_CARDS.find(d => d.id === c.id);
+    return '<button class="dash-chip" data-enable="' + c.id + '" title="点击重新显示该图表">＋ ' +
+      esc(def ? def.title : c.id) + "</button>";
+  }).join("");
+  const cardsHtml = cards.filter(c => c.enabled).map(c => {
+    const def = DASH_CARDS.find(d => d.id === c.id) || { title: c.id };
+    const wide = ["stats", "recent"].includes(c.id) ? " span2" : "";
+    let body = '<div class="dash-chart"></div>';
+    if (c.id === "recent") {
+      body = '<div class="dash-recent"><table><thead><tr>' +
+        "<th>时间</th><th>类型</th><th>文件</th><th>大小</th><th>来源</th></tr></thead>" +
+        '<tbody id="dashRecentBody"><tr><td colspan="5">加载中…</td></tr></tbody></table></div>';
+    }
+    if (c.id === "stats") body = '<div class="dash-stat-row" id="dashStats"></div>';
+    if (c.id === "type-pie") body = '<div class="pie-flex"><div class="dash-chart"></div><div class="pie-legend" id="pieLegend"></div></div>';
+    // 柱状图排序切换：名称首字母 / 大小占比
+    const sortBtn = c.id === "type-size"
+      ? '<button class="btn dash-sort" data-size-sort title="切换排序方式">排序：' +
+        (dash.sizeSort === "size" ? "大小" : "名称") + "</button>"
+      : "";
+    return '<div class="dash-card' + wide + '" data-id="' + c.id + '">' +
+      '<div class="dash-card-head"><span class="t">' + esc(def.title) + "</span>" + sortBtn +
+      '<span class="dash-drag" title="拖动排序">⠿</span>' +
+      '<label class="dash-switch" title="显示 / 隐藏该图表"><input type="checkbox" checked data-toggle="' + c.id + '"><i></i></label>' +
+      "</div><div class='dash-card-body'>" + body + "</div></div>";
+  }).join("");
+  view.innerHTML =
+    '<div class="dash-toolbar">' +
+    '<select id="dashRange" title="统计时间范围"><option value="24h">最近 24 小时</option>' +
+    '<option value="7d">最近 7 天</option><option value="30d">最近 30 天</option></select>' +
+    '<span class="hint">每 3 秒自动刷新 · 拖动 ⠿ 排序 · 开关控制显示</span>' +
+    (offChips ? '<span class="hint">已隐藏：</span>' + offChips : "") +
+    '</div><div class="dash-grid">' + cardsHtml + "</div>";
+  $("#dashRange").value = dash.range;
+  $("#dashRange").onchange = () => {
+    dash.range = $("#dashRange").value;
+    localStorage.setItem("lan_share_dash_range", dash.range);
+    dashRefresh();
+  };
+  // 卡片开关：关闭即保存（卡片从界面消失，可通过工具栏 chip 恢复）
+  view.querySelectorAll("input[data-toggle]").forEach(chk => {
+    chk.onchange = () => dashSaveConfig();
+  });
+  // 恢复已停用卡片
+  view.querySelectorAll("[data-enable]").forEach(btn => {
+    btn.onclick = async () => {
+      const c = dash.cards.find(x => x.id === btn.dataset.enable);
+      if (c) { c.enabled = true; c.order = 99; }   // 排到末尾
+      await dashSaveConfig();
+    };
+  });
+  // 拖拽排序（⠿ 按下才允许拖动，避免误触整卡拖拽）
+  view.querySelectorAll(".dash-card").forEach(card => {
+    card.querySelector(".dash-drag").addEventListener("mousedown", () => card.draggable = true);
+    card.addEventListener("dragstart", e => {
+      card.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", card.dataset.id);
+    });
+    card.addEventListener("dragend", () => { card.classList.remove("dragging"); card.draggable = false; });
+    card.addEventListener("dragover", e => e.preventDefault());
+    card.addEventListener("drop", e => {
+      e.preventDefault();
+      const from = e.dataTransfer.getData("text/plain");
+      const to = card.dataset.id;
+      if (from === to || !from) return;
+      const list = dash.cards.slice();
+      const fi = list.findIndex(c => c.id === from), ti = list.findIndex(c => c.id === to);
+      if (fi < 0 || ti < 0) return;
+      const [moved] = list.splice(fi, 1);
+      list.splice(ti, 0, moved);
+      dash.cards = list;
+      dashSaveConfig();
+    });
+  });
+  // 柱状图排序切换：点击在「名称 / 大小」两种模式间切换，偏好存 localStorage
+  const sb = view.querySelector("[data-size-sort]");
+  if (sb) sb.onclick = () => {
+    dash.sizeSort = dash.sizeSort === "size" ? "name" : "size";
+    localStorage.setItem("lan_share_size_sort", dash.sizeSort);
+    sb.textContent = "排序：" + (dash.sizeSort === "size" ? "大小" : "名称");
+    dashRefresh();
+  };
+  ["type-pie", "type-size", "upload-trend", "download-trend"].forEach(dashInitChart);
+}
+
+async function dashSaveConfig() {
+  // 从 DOM 收集可见卡片的顺序与开关状态，与 dash.cards 合并后保存
+  const order = Array.from($("#dashView").querySelectorAll(".dash-card")).map(el => el.dataset.id);
+  const enabled = {};
+  $("#dashView").querySelectorAll("input[data-toggle]").forEach(chk => {
+    enabled[chk.dataset.toggle] = chk.checked;
+  });
+  const base = dash.cards.length ? dash.cards : DASH_CARDS.map((c, i) => ({ id: c.id, enabled: true, order: i + 1 }));
+  const cards = base.map(c => ({
+    id: c.id,
+    enabled: c.id in enabled ? enabled[c.id] : c.enabled,
+    order: order.indexOf(c.id) >= 0 ? order.indexOf(c.id) + 1 : c.order,
+  }));
+  try {
+    const j = await api("/admin/api/dashboard-config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cards }),
+    });
+    dash.cards = j.cards;
+  } catch (e) { toast("保存布局失败：" + e.message); }
+  dashRender();
+  dashRefresh();
+}
+
+function dashBucketLabel(ts, bucket) {
+  const d = new Date(ts * 1000);
+  const p = (x) => String(x).padStart(2, "0");
+  return bucket === "day" ? d.getMonth() + 1 + "/" + d.getDate() : p(d.getHours()) + ":00";
+}
+
+async function dashRefresh() {
+  if (dash.view !== "dash") return;
+  const bucket = dash.range === "24h" ? "hour" : "day";
+  let stats, recent, summary;
+  try {
+    [stats, recent, summary] = await Promise.all([
+      api("/admin/api/logs/stats?range=" + dash.range + "&bucket=" + bucket),
+      api("/admin/api/logs/recent?limit=50"),
+      api("/admin/api/dashboard/summary"),
+    ]);
+  } catch (_) { return; }   // 后台请求失败静默（下一轮重试）
+
+  // 总览卡
+  const statsBox = $("#dashStats");
+  if (statsBox && summary.totals) {
+    const t = summary.totals;
+    statsBox.innerHTML =
+      '<div class="dash-stat"><div class="k">总上传</div><div class="v">' + t.uploads_count +
+      '</div><div class="s">' + fmtSize(t.uploads_bytes) + "</div></div>" +
+      '<div class="dash-stat"><div class="k">总下载（含预览）</div><div class="v">' + t.downloads_count +
+      '</div><div class="s">' + fmtSize(t.downloads_bytes) + "</div></div>" +
+      '<div class="dash-stat"><div class="k">今日事件</div><div class="v">' + t.today_count +
+      '</div><div class="s">上传 + 下载</div></div>' +
+      '<div class="dash-stat"><div class="k">共享文件</div><div class="v">' + summary.shared_files +
+      '</div><div class="s">全部挂载合计</div></div>';
+  }
+
+  // 文件类型占比（饼图：无引导线，图例改 HTML 弹性布局全部直出；悬停色块出详情 tooltip）
+  if (dash.charts["type-pie"]) {
+    const pieData = (summary.type_counts || []).map((t, i) => ({
+      name: t.type, value: t.count,
+      itemStyle: { color: DASH_COLORS[i % DASH_COLORS.length] },
+    }));
+    // 高度随种类数自适应（少→矮、多→高），容器变化后 resize 生效
+    const pieEl = document.querySelector('.dash-card[data-id="type-pie"] .dash-chart');
+    if (pieEl) {
+      pieEl.style.height = chartHeight(pieData.length) + "px";
+      dash.charts["type-pie"].resize();
+    }
+    dash.charts["type-pie"].setOption({
+      tooltip: { trigger: "item", formatter: "{b}：{c} 个（{d}%）" },
+      series: [{
+        type: "pie", radius: ["40%", "68%"], center: ["50%", "50%"],
+        label: { show: false }, labelLine: { show: false },
+        itemStyle: { borderColor: "transparent", borderWidth: 2 },
+        data: pieData,
+      }],
+    }, true);
+    // HTML 图例：色块 + 名称 + 数量，自动换行全部直出（无折叠/翻页/滚动）
+    const lg = $("#pieLegend");
+    if (lg) lg.innerHTML = pieData.map((d, i) =>
+      '<span class="pl-item" title="' + esc(d.name) + '"><i style="background:' +
+      DASH_COLORS[i % DASH_COLORS.length] + '"></i>' + esc(d.name) + " ×" + d.value + "</span>"
+    ).join("");
+  }
+  // 类型大小分布（柱状图：卡片通栏加宽、无滚动条，所有柱子一屏完整可见；排序可切换）
+  if (dash.charts["type-size"]) {
+    const rows = (summary.type_sizes || []).slice();
+    rows.sort(dash.sizeSort === "size"
+      ? (a, b) => b.size - a.size || a.type.localeCompare(b.type, "zh-CN")
+      : (a, b) => a.type.localeCompare(b.type, "zh-CN"));
+    // 高度随种类数自适应（少→矮、多→高），容器变化后 resize 生效
+    const barEl = document.querySelector('.dash-card[data-id="type-size"] .dash-chart');
+    if (barEl) {
+      barEl.style.height = chartHeight(rows.length) + "px";
+      dash.charts["type-size"].resize();
+    }
+    const rot = rows.length > 12 ? 40 : 0;   // 类别多时轴标签斜排防重叠（柱子本身一个不少）
+    dash.charts["type-size"].setOption({
+      tooltip: { trigger: "axis", valueFormatter: v => fmtSize(v) },
+      grid: { left: 56, right: 16, top: 16, bottom: rot ? 50 : 28 },
+      xAxis: Object.assign({ type: "category", data: rows.map(t => t.type) }, dashAxis(),
+        { axisLabel: { color: dashTextColor(), interval: "auto", rotate: rot, fontSize: 10.5 } }),
+      yAxis: Object.assign({ type: "value" }, dashAxis(),
+        { axisLabel: { color: dashTextColor(), formatter: v => fmtSize(v) } }),
+      series: [{ type: "bar", barMaxWidth: 34, data: rows.map(t => t.size) }],
+    }, true);
+  }
+  // 趋势折线（次数 + 流量双轴）
+  const labels = (stats.buckets || []).map(b => dashBucketLabel(b.bucket_start, stats.bucket));
+  const trendOpt = (countKey, bytesKey) => ({
+    tooltip: { trigger: "axis" },
+    legend: { top: 0, textStyle: { color: dashTextColor() } },
+    grid: { left: 44, right: 56, top: 30, bottom: 26 },
+    xAxis: Object.assign({ type: "category", data: labels }, dashAxis()),
+    yAxis: [
+      Object.assign({ type: "value", minInterval: 1 }, dashAxis()),
+      Object.assign({ type: "value" }, dashAxis(),
+        { axisLabel: { color: dashTextColor(), formatter: v => fmtSize(v) }, splitLine: { show: false } }),
+    ],
+    series: [
+      { name: "次数", type: "line", smooth: true, symbolSize: 5, showSymbol: false,
+        data: stats.buckets.map(b => b[countKey]) },
+      { name: "流量", type: "line", smooth: true, symbolSize: 5, showSymbol: false, yAxisIndex: 1,
+        data: stats.buckets.map(b => b[bytesKey]) },
+    ],
+  });
+  if (dash.charts["upload-trend"]) dash.charts["upload-trend"].setOption(trendOpt("uploads_count", "uploads_bytes"));
+  if (dash.charts["download-trend"]) dash.charts["download-trend"].setOption(trendOpt("downloads_count", "downloads_bytes"));
+
+  // 最近事件列表
+  const tbody = $("#dashRecentBody");
+  if (tbody) {
+    const tagTxt = { upload: "上传", download: "下载", preview: "预览" };
+    tbody.innerHTML = recent.length ? recent.map(r =>
+      "<tr><td>" + fmtDate(r.ts) + "</td>" +
+      '<td><span class="tag ' + esc(r.type) + '">' + (tagTxt[r.type] || esc(r.type)) + "</span></td>" +
+      '<td class="fname-c" title="' + esc(r.filename) + '">' + esc(r.filename) + "</td>" +
+      "<td>" + fmtSize(r.size) + "</td><td>" + esc(r.ip) + "</td></tr>"
+    ).join("") : '<tr><td colspan="5">暂无记录</td></tr>';
+  }
+}
+
+function dashStartPolling() {
+  dashStopPolling();
+  dash.timer = setInterval(() => { if (!document.hidden) dashRefresh(); }, 3000);
+}
+function dashStopPolling() {
+  if (dash.timer) { clearInterval(dash.timer); dash.timer = null; }
+}
+// 窗口尺寸变化（拖侧栏 / 缩放）时重排图表
+window.addEventListener("resize", () => {
+  Object.values(dash.charts).forEach(c => c && c.resize());
+});
+
+/* 切换左右两块的可见性 + 日志入口高亮（不触发数据加载） */
+function setDashVisible(isDash) {
+  $("#fileList").classList.toggle("hidden", isDash);
+  $("#emptyTip").classList.toggle("hidden", isDash);
+  $("#bcbar").classList.toggle("dash-mode", isDash);
+  $("#dashView").classList.toggle("hidden", !isDash);
+  if (isDash) $("#statBadge").classList.add("hidden");   // 回文件视图时由 renderList 重新计算显示
+  $("#navDashBtn").classList.toggle("active", isDash);
+}
+
+/* 进入日志页（加载数据 + 轮询） */
+async function enterDash() {
+  setDashVisible(true);
+  dash.view = "dash";
+  $("#crumbs").innerHTML = '<span class="crumb" style="cursor:default">日志 / 统计仪表板</span>';
+  await loadDashboardConfig();
+  dashRender();
+  dashRefresh();
+  dashStartPolling();
+}
+
+/* 回文件页（面包屑与列表恢复） */
+function enterFiles() {
+  setDashVisible(false);
+  dash.view = "files";
+  dashStopPolling();
+  renderCrumbs();   // 重建面包屑
+  loadList();
+}
+
+/* 日志入口：点击直达日志仪表板，压入历史（侧键可后退/前进）；
+   回文件界面 = 点挂载列表任一项（见 navigate），无需专门按钮 */
+$("#navDashBtn").onclick = () => {
+  if (dash.view === "dash") return;
+  history.pushState({ dash: true }, "", "#logs");
+  enterDash();
+};
+
+/* 同文档 hash 跳转（页面内链接 / location.hash 赋值，不整页刷新）也按 URL 切视图 */
+window.addEventListener("hashchange", () => {
+  const wantDash = location.hash === "#logs";
+  if (wantDash && dash.view !== "dash") enterDash();
+  else if (!wantDash && dash.view === "dash") enterFiles();
+});
+
+/* ─────────── 上传设置（侧栏） ─────────── */
+
+async function loadUploadSettings() {
+  try {
+    const s = await api("/admin/api/state");
+    $("#autoShareChk").checked = !!s.auto_share_uploads;
+    $("#uploadDirInput").value = s.upload_dir || "";
+  } catch (_) {}
+}
+/* 上传文件夹对外共享开关：复选框与挂载列表的状态按钮共用这一个入口 */
+async function setUploadsShare(share) {
+  try {
+    const j = await api("/admin/api/uploads-settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ auto_share: share }),
+    });
+    st.auto_share_uploads = !!j.auto_share;
+    toast(st.auto_share_uploads ? "上传文件夹已对外共享" : "上传文件夹已隐藏（仅本机可见）");
+    renderSidebar();   // 刷新挂载列表上的「共享中 / 已隐藏」状态按钮
+  } catch (e) {
+    toast("设置失败：" + e.message);
+  }
+  $("#autoShareChk").checked = st.auto_share_uploads;   // 失败时回退复选框
+}
+$("#autoShareChk").onchange = () => setUploadsShare($("#autoShareChk").checked);
+
+$("#editUploadDirBtn").onclick = async () => {
+  // 与「＋ 文件夹」相同的系统目录选择弹窗（服务器本机弹出，可自由浏览选择）
+  let paths;
+  try {
+    const j = await api("/admin/api/pick-folder", { method: "POST" });
+    paths = j.paths || [];
+  } catch (e) { toast("打开选择窗口失败：" + e.message); return; }
+  if (!paths.length) return;   // 用户取消了选择
+  try {
+    const j = await api("/admin/api/uploads-settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ upload_dir: paths[0] }),
+    });
+    $("#uploadDirInput").value = j.upload_dir || paths[0];
+    toast("接收目录已保存");
+  } catch (e) { toast("保存失败：" + e.message); }
+};
+
+/* ─────────── 启动 ─────────── */
+
+loadState();
+loadUploadSettings();
+// 初始状态写入当前历史条目（侧键一路后退可回到这里）；URL 带 #logs 时直达日志页
+if (location.hash === "#logs") {
+  history.replaceState({ dash: true }, "");
+  enterDash();
+} else {
+  history.replaceState({ share: null, path: [] }, "");
+}
+</script>
+</body>
+</html>

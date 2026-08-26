@@ -1,0 +1,32 @@
+# 运行产生的本地数据（含隐私，绝不入库）
+# config.json：本机真实挂载路径与密码哈希，首次运行自动生成
+config.json
+logs.db
+*.db
+uploads/
+
+# 构建产物（可再生）
+build/
+dist/
+*.spec
+app.ico
+
+# 打包专用虚拟环境
+build_env/
+
+# Python 缓存
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 开发过程文档与实验目录（个人工作区）
+.trae/
+docs/
+.superpowers/
+notify_test/
+
+# 编辑器/系统杂项
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini

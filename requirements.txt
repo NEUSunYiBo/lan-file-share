@@ -1,0 +1,8 @@
+flask>=3.0
+waitress>=3.0
+pystray>=0.19
+pillow>=10.0
+qrcode>=7.0        # 管理页「访问地址」二维码（未安装时该功能自动隐藏，其余不受影响）
+
+# 打包 exe（可选）：pip install pyinstaller
+# 开发与测试（可选）：pip install pytest
