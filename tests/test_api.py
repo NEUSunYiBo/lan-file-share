@@ -535,27 +535,78 @@ def test_admin_locate_errors(env, tmp_path):
 
 
 def test_admin_locate_reveal_and_open(env, tmp_path, monkeypatch):
+    """reveal/open 经 winfocus.launch_and_focus 启动（窗口置前），参数与提示正确。"""
     client, state = env
     m, root = _make_share(state, tmp_path)
     target = str(root / "机密.zip")
 
     import api_admin
-    calls = {"explorer": [], "startfile": []}
+    import winfocus
+    calls = {"explorer": [], "startfile": [], "hints": []}
+
+    def fake_launch_and_focus(launch, title_hint=None, timeout=2.0, settle=0.25):
+        calls["hints"].append(title_hint)
+        launch()   # 同步执行被 monkeypatch 的启动函数
+        return True
+
+    monkeypatch.setattr(winfocus, "launch_and_focus", fake_launch_and_focus)
     monkeypatch.setattr(api_admin.subprocess, "run", lambda cmd, **kw: calls["explorer"].append(cmd))
     monkeypatch.setattr(os, "startfile", lambda p: calls["startfile"].append(p), raising=False)
 
-    # 在文件夹中显示 → explorer /select,"真实路径"
+    # 在文件夹中显示 → explorer /select,"真实路径"；title_hint = 父目录名（窗口标题兜底）
     r = client.post("/admin/api/locate",
                     json={"share": m["id"], "path": "机密.zip", "action": "reveal"})
     assert r.status_code == 200 and r.json["ok"] is True
     assert len(calls["explorer"]) == 1
     assert calls["explorer"][0] == 'explorer /select,"{}"'.format(os.path.realpath(target))
+    assert calls["hints"][0] == os.path.basename(root)
 
-    # 打开 → os.startfile(真实路径)
+    # 打开文件 → os.startfile(真实路径)；文件无 title_hint（目标窗口不定）
     r = client.post("/admin/api/locate",
                     json={"share": m["id"], "path": "机密.zip", "action": "open"})
     assert r.status_code == 200 and r.json["ok"] is True
     assert calls["startfile"] == [os.path.realpath(target)]
+    assert calls["hints"][1] is None
+
+    # 打开文件夹 → startfile(文件夹)；title_hint = 文件夹名（explorer 窗口标题）
+    r = client.post("/admin/api/locate",
+                    json={"share": m["id"], "path": "公开目录", "action": "open"})
+    assert r.status_code == 200 and r.json["ok"] is True
+    assert calls["startfile"] == [os.path.realpath(target), os.path.realpath(str(root / "公开目录"))]
+    assert calls["hints"][2] == "公开目录"
+
+
+def test_admin_search_scope_and_hidden(env, tmp_path):
+    """管理端搜索：隐藏挂载仍可搜到（管理员看得到全部）；share= 限定本共享；仅本机可调。"""
+    client, state = env
+    m, root = _make_share(state, tmp_path)
+    (root / "隐藏世界.txt").write_text("x", encoding="utf-8")
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "别处的文件.txt").write_text("y", encoding="utf-8")
+    m2 = state.registry.add(str(other))
+
+    state.registry.set_hidden(m["id"], True)   # 挂载隐藏：用户端不可见，管理端仍可见
+
+    # 管理端能搜到隐藏挂载里的文件（对照：用户端搜不到）
+    r = client.get("/admin/api/search?q=隐藏世界")
+    assert r.status_code == 200
+    assert [i["name"] for i in r.json] == ["隐藏世界.txt"]
+    assert client.get("/api/search?q=隐藏世界").json == []
+
+    # share= 限定：只搜该挂载
+    r = client.get("/admin/api/search?q=文件&share=" + m2["id"])
+    assert [i["name"] for i in r.json] == ["别处的文件.txt"]
+
+    # 不带 share：两个挂载都搜（隐藏与否不影响）
+    r = client.get("/admin/api/search?q=txt")
+    names = {i["name"] for i in r.json}
+    assert {"隐藏世界.txt", "别处的文件.txt", "ok.txt"} <= names
+
+    # 空关键字 → 空结果；非本机 → 403
+    assert client.get("/admin/api/search?q=").json == []
+    assert client.get("/admin/api/search?q=x",
+                      environ_base={"REMOTE_ADDR": "192.168.1.50"}).status_code == 403
 
 def test_admin_exclude_root_400(env, tmp_path):
     client, state = env

@@ -308,7 +308,8 @@ html[data-theme="dark"] .dash-recent .tag.preview{background:#2e2413;color:#ffd4
         </select>
         <select id="searchScope" title="搜索范围">
           <option value="local">本目录</option>
-          <option value="global">全部挂载</option>
+          <option value="share">本共享</option>
+          <option value="global">全部共享</option>
         </select>
         <input id="searchInput" placeholder="搜索文件名…" autocomplete="off">
         <button class="btn" id="themeBtn" title="切换深色 / 浅色主题"></button>
@@ -751,7 +752,7 @@ function makeRow(it, rel, mount) {
     '<span class="fmtime">' + fmtDate(it.mtime) + "</span>" +
     '<span class="acts">' + acts + "</span>";
 
-  // 目录点击进入（排除的目录管理员仍可进入查看）
+  // 目录点击进入（排除的目录管理员仍可进入查看）；文件左键 = 系统默认程序打开
   row.onclick = (e) => {
     const act = e.target.closest("[data-act]");
     if (act) {
@@ -763,6 +764,8 @@ function makeRow(it, rel, mount) {
     }
     if (it.is_dir && !it.single) {
       navigate(st.cur.share, [...st.cur.path, it.name]);
+    } else if (!it.is_dir) {
+      openTarget(st.cur.share, it.single ? "" : rel, it.name);
     }
   };
 
@@ -845,9 +848,14 @@ $("#searchInput").addEventListener("input", () => {
 async function globalSearch() {
   const q = $("#searchInput").value.trim();
   if (!q) { st.searchResults = null; renderList(); return; }
+  const scope = $("#searchScope").value;
+  // 管理端专用搜索：不过滤隐藏挂载（管理员看得到全部）；本共享 = 限定当前挂载，
+  // 根视图未选挂载时退化为全部（与用户端一致）
+  const qp = new URLSearchParams({ q });
+  if (scope === "share" && st.cur.share) qp.set("share", st.cur.share);
   try {
-    const items = await api("/api/search?q=" + encodeURIComponent(q));
-    st.searchResults = { items, scopeName: "全部挂载" };
+    const items = await api("/admin/api/search?" + qp.toString());
+    st.searchResults = { items, scopeName: scope === "share" ? "本共享" : "全部共享" };
     renderList();
   } catch (e) { toast("搜索失败：" + e.message); }
 }
@@ -1446,7 +1454,20 @@ function showCtxMenu(e, target) {
   ctxMenu.style.top = Math.max(8, Math.min(e.clientY, innerHeight - mh - 8)) + "px";
 }
 
-// 菜单项：copy → 后端返回真实路径后复制剪贴板；reveal/open → 后端调起资源管理器
+// 用系统默认程序打开（文件行左键 = 右键菜单「打开」，共用同一实现）
+async function openTarget(share, rel, name) {
+  try {
+    await api("/admin/api/locate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ share, path: rel, action: "open" }),
+    });
+    toast("已打开：" + name);
+  } catch (err) {
+    toast("操作失败：" + err.message);
+  }
+}
+
 ctxMenu.addEventListener("click", async (e) => {
   const btn = e.target.closest("[data-ctx]");
   if (!btn) return;
@@ -1454,6 +1475,10 @@ ctxMenu.addEventListener("click", async (e) => {
   hideCtxMenu();
   if (!t) return;
   const action = btn.dataset.ctx;
+  if (action === "open") {
+    openTarget(t.share, t.rel, t.name);
+    return;
+  }
   try {
     const j = await api("/admin/api/locate", {
       method: "POST",
@@ -1465,8 +1490,6 @@ ctxMenu.addEventListener("click", async (e) => {
       toast("已复制：" + j.path);
     } else if (action === "reveal") {
       toast("已在资源管理器中显示：" + t.name);
-    } else {
-      toast("已打开：" + t.name);
     }
   } catch (err) {
     toast("操作失败：" + err.message);

@@ -12,7 +12,9 @@ from flask import Blueprint, jsonify, request, send_file
 
 import auth as auth_mod
 import config as config_mod
+import fs_search
 import network
+import winfocus
 from mounts import MountRegistry, PathEscapeError
 
 try:
@@ -221,13 +223,30 @@ def make_admin_bp(state, service=None):
             return jsonify({"ok": True, "path": real})
         if action == "reveal":
             # explorer /select,"路径"：在所在目录中选中该项；
-            # 单文件挂载根 / 挂载根本身也是这样定位（在其父目录中选中）
-            subprocess.run('explorer /select,"{}"'.format(real), check=False)
+            # 单文件挂载根 / 挂载根本身也是这样定位（在其父目录中选中）。
+            # 窗口标题 = 父目录名，作为置前兜底的匹配提示
+            parent = os.path.basename(os.path.dirname(real))
+            winfocus.launch_and_focus(
+                lambda: subprocess.run('explorer /select,"{}"'.format(real), check=False),
+                title_hint=parent)
             return jsonify({"ok": True})
         if action == "open":
-            os.startfile(real)   # 文件夹 → 资源管理器；文件 → 默认关联程序
+            # 文件夹 → 资源管理器（窗口标题 = 文件夹名）；文件 → 默认关联程序
+            hint = os.path.basename(real) if os.path.isdir(real) else None
+            winfocus.launch_and_focus(lambda: os.startfile(real), title_hint=hint)
             return jsonify({"ok": True})
         return jsonify({"error": "未知操作: " + action}), 400
+
+    @bp.get("/admin/api/search")
+    def api_admin_search():
+        """管理端搜索：不过滤隐藏/未共享挂载（管理员看得到全部）；share= 可限定本共享。
+
+        与用户端 /api/search 返回结构一致（fs_search.search_mounts 共用实现）。
+        """
+        return jsonify(fs_search.search_mounts(
+            state, request.args.get("q", ""),
+            share_id=request.args.get("share", "") or None,
+            user_view=False))
 
     @bp.post("/admin/api/pick-files")
     def api_pick_files():
