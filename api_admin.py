@@ -4,6 +4,7 @@ import ipaddress
 import io
 import logging
 import os
+import subprocess
 import threading
 import time
 
@@ -193,6 +194,40 @@ def make_admin_bp(state, service=None):
     def api_pick_folder():
         paths = _pick_paths("folder")
         return jsonify({"ok": bool(paths), "paths": paths})
+
+    @bp.post("/admin/api/locate")
+    def api_locate():
+        """定位挂载点内的文件/文件夹（管理端右键菜单）。
+
+        body: {share, path, action}
+        - action=copy   → 返回真实绝对路径（前端复制到剪贴板）
+        - action=reveal → 资源管理器中打开所在目录并选中该项
+        - action=open   → 用系统默认程序直接打开（文件夹则打开目录）
+        """
+        data = request.get_json(silent=True) or {}
+        mount = state.registry.get(str(data.get("share", "")))
+        if not mount:
+            return jsonify({"error": "挂载点不存在"}), 404
+        rel = MountRegistry._norm_rel(str(data.get("path", "")))
+        try:
+            real = MountRegistry.safe_join(mount["path"], rel)
+        except PathEscapeError:
+            return jsonify({"error": "路径越界"}), 403
+        if not os.path.exists(real):
+            return jsonify({"error": "路径不存在（磁盘可能已移除）"}), 404
+
+        action = str(data.get("action", ""))
+        if action == "copy":
+            return jsonify({"ok": True, "path": real})
+        if action == "reveal":
+            # explorer /select,"路径"：在所在目录中选中该项；
+            # 单文件挂载根 / 挂载根本身也是这样定位（在其父目录中选中）
+            subprocess.run('explorer /select,"{}"'.format(real), check=False)
+            return jsonify({"ok": True})
+        if action == "open":
+            os.startfile(real)   # 文件夹 → 资源管理器；文件 → 默认关联程序
+            return jsonify({"ok": True})
+        return jsonify({"error": "未知操作: " + action}), 400
 
     @bp.post("/admin/api/pick-files")
     def api_pick_files():

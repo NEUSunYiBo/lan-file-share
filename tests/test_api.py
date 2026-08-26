@@ -475,6 +475,88 @@ def test_admin_exclude_restore_roundtrip(env, tmp_path):
     assert state.registry.is_excluded(m["id"], "机密.zip") is False
     assert "机密.zip" in [i["name"] for i in client.get("/api/list?share=" + m["id"]).json]
 
+
+# ─────────────── 右键定位（复制路径 / 在文件夹中显示 / 打开） ───────────────
+
+def test_admin_locate_copy_returns_real_path(env, tmp_path):
+    client, state = env
+    m, root = _make_share(state, tmp_path)
+
+    def locate(payload):
+        return client.post("/admin/api/locate", json=payload)
+
+    # 文件（含子目录相对路径）
+    r = locate({"share": m["id"], "path": "公开目录/ok.txt", "action": "copy"})
+    assert r.status_code == 200 and r.json["ok"] is True
+    assert os.path.realpath(r.json["path"]) == os.path.realpath(str(root / "公开目录" / "ok.txt"))
+
+    # 目录
+    r = locate({"share": m["id"], "path": "公开目录", "action": "copy"})
+    assert r.status_code == 200
+    assert os.path.realpath(r.json["path"]) == os.path.realpath(str(root / "公开目录"))
+
+    # 挂载根（path 为空）
+    r = locate({"share": m["id"], "path": "", "action": "copy"})
+    assert r.status_code == 200
+    assert os.path.realpath(r.json["path"]) == os.path.realpath(str(root))
+
+    # 单文件挂载：根即文件本身
+    f = tmp_path / "单文件.log"
+    f.write_text("x", encoding="utf-8")
+    mf = state.registry.add(str(f))
+    r = locate({"share": mf["id"], "path": "", "action": "copy"})
+    assert r.status_code == 200
+    assert os.path.realpath(r.json["path"]) == os.path.realpath(str(f))
+
+
+def test_admin_locate_errors(env, tmp_path):
+    client, state = env
+    m, _ = _make_share(state, tmp_path)
+
+    # 挂载不存在
+    assert client.post("/admin/api/locate",
+                       json={"share": "nope", "path": "", "action": "copy"}).status_code == 404
+    # 路径越界
+    r = client.post("/admin/api/locate",
+                    json={"share": m["id"], "path": "../../etc", "action": "copy"})
+    assert r.status_code == 403
+    # 路径不存在
+    r = client.post("/admin/api/locate",
+                    json={"share": m["id"], "path": "没有这个.txt", "action": "copy"})
+    assert r.status_code == 404
+    # 未知操作
+    r = client.post("/admin/api/locate",
+                    json={"share": m["id"], "path": "机密.zip", "action": "run"})
+    assert r.status_code == 400
+    # 非本机调用 → 403
+    remote = {"REMOTE_ADDR": "192.168.1.50"}
+    assert client.post("/admin/api/locate", environ_base=remote,
+                       json={"share": m["id"], "path": "", "action": "copy"}).status_code == 403
+
+
+def test_admin_locate_reveal_and_open(env, tmp_path, monkeypatch):
+    client, state = env
+    m, root = _make_share(state, tmp_path)
+    target = str(root / "机密.zip")
+
+    import api_admin
+    calls = {"explorer": [], "startfile": []}
+    monkeypatch.setattr(api_admin.subprocess, "run", lambda cmd, **kw: calls["explorer"].append(cmd))
+    monkeypatch.setattr(os, "startfile", lambda p: calls["startfile"].append(p), raising=False)
+
+    # 在文件夹中显示 → explorer /select,"真实路径"
+    r = client.post("/admin/api/locate",
+                    json={"share": m["id"], "path": "机密.zip", "action": "reveal"})
+    assert r.status_code == 200 and r.json["ok"] is True
+    assert len(calls["explorer"]) == 1
+    assert calls["explorer"][0] == 'explorer /select,"{}"'.format(os.path.realpath(target))
+
+    # 打开 → os.startfile(真实路径)
+    r = client.post("/admin/api/locate",
+                    json={"share": m["id"], "path": "机密.zip", "action": "open"})
+    assert r.status_code == 200 and r.json["ok"] is True
+    assert calls["startfile"] == [os.path.realpath(target)]
+
 def test_admin_exclude_root_400(env, tmp_path):
     client, state = env
     m, _ = _make_share(state, tmp_path)

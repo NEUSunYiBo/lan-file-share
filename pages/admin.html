@@ -149,6 +149,12 @@ html[data-theme="dark"] #toast{border:1px solid var(--line)}
 .mount-item .mstat-btn.on{color:var(--ok);background:rgba(22,163,74,.12)}
 .mount-item .mstat-btn.off{color:var(--sub);background:var(--bg)}
 .mount-item .mstat-btn:hover{filter:brightness(.92)}
+
+/* ── 右键菜单（文件/文件夹定位操作） ── */
+#ctxMenu{position:fixed;z-index:1000;min-width:172px;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.22);padding:5px;display:none}
+#ctxMenu .ctx-title{font-size:11.5px;color:var(--sub);padding:5px 10px 7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px}
+#ctxMenu .ctx-item{display:block;width:100%;text-align:left;padding:7px 12px;margin:1px 0;border:none;background:none;color:var(--txt);font-size:13px;font-family:inherit;border-radius:6px;cursor:pointer}
+#ctxMenu .ctx-item:hover{background:var(--brand-weak);color:var(--brand)}
 .up-settings{margin-top:8px;display:flex;flex-direction:column;gap:10px;font-size:13px}
 .up-toggle{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
 .up-dir-row{display:flex;gap:6px}
@@ -502,6 +508,9 @@ function renderSidebar() {
       if (e.target.closest(".rm") || e.target.closest(".mstat-btn")) return;
       navigate(m.id, []);
     };
+    // 右键挂载项：定位挂载根目录（复制路径 / 在文件夹中显示 / 打开）
+    div.addEventListener("contextmenu", (e) =>
+      showCtxMenu(e, { share: m.id, rel: "", name: m.name }));
     div.querySelector(".mstat-btn").onclick = async () => {
       if (sys) { setUploadsShare(!st.auto_share_uploads); return; }
       try {
@@ -548,6 +557,9 @@ function renderSidebar() {
         st.highlight = name;
         navigate(m.id, parts);
       };
+      // 右键排除项：被取消共享的文件仍在磁盘上，同样可定位
+      div.addEventListener("contextmenu", (e) =>
+        showCtxMenu(e, { share: m.id, rel: rel, name: name }));
       div.querySelector(".ex-restore").onclick = async () => {
         await restoreItem(m.id, rel);
       };
@@ -754,6 +766,10 @@ function makeRow(it, rel, mount) {
     }
   };
 
+  // 右键：复制路径 / 在文件夹中显示 / 打开（单文件挂载定位到文件本身，rel 用 ""）
+  row.addEventListener("contextmenu", (e) =>
+    showCtxMenu(e, { share: st.cur.share, rel: it.single ? "" : rel, name: it.name }));
+
   // 从排除区/搜索跳入时闪烁高亮
   if (st.highlight && it.name === st.highlight) {
     st.highlight = null;
@@ -780,6 +796,9 @@ function makeResultRow(item) {
       navigate(item.share, parts);
     }
   };
+  // 右键搜索结果：同样可复制路径 / 在文件夹中显示 / 打开
+  row.addEventListener("contextmenu", (e) =>
+    showCtxMenu(e, { share: item.share, rel: item.path, name: item.name }));
   return row;
 }
 
@@ -1398,6 +1417,95 @@ $("#editUploadDirBtn").onclick = async () => {
     toast("接收目录已保存");
   } catch (e) { toast("保存失败：" + e.message); }
 };
+
+/* ─────────── 右键菜单（文件/文件夹定位操作） ─────────── */
+
+const ctxMenu = document.createElement("div");
+ctxMenu.id = "ctxMenu";
+document.body.appendChild(ctxMenu);
+let ctxTarget = null;   // {share, rel, name}：右键的目标（rel 为挂载内相对路径，"" = 挂载根）
+
+function hideCtxMenu() {
+  ctxMenu.style.display = "none";
+  ctxTarget = null;
+}
+
+function showCtxMenu(e, target) {
+  e.preventDefault();
+  e.stopPropagation();   // 不再冒泡到 document（避免立即被关闭、也屏蔽原生菜单）
+  ctxTarget = target;
+  ctxMenu.innerHTML =
+    '<div class="ctx-title" title="' + esc(target.name) + '">' + esc(target.name) + "</div>" +
+    '<button class="ctx-item" data-ctx="copy">复制完整路径</button>' +
+    '<button class="ctx-item" data-ctx="reveal">在文件夹中显示</button>' +
+    '<button class="ctx-item" data-ctx="open">打开</button>';
+  ctxMenu.style.display = "block";
+  // 贴右/下边缘时向内翻转，保证菜单完整可见
+  const mw = ctxMenu.offsetWidth, mh = ctxMenu.offsetHeight;
+  ctxMenu.style.left = Math.max(8, Math.min(e.clientX, innerWidth - mw - 8)) + "px";
+  ctxMenu.style.top = Math.max(8, Math.min(e.clientY, innerHeight - mh - 8)) + "px";
+}
+
+// 菜单项：copy → 后端返回真实路径后复制剪贴板；reveal/open → 后端调起资源管理器
+ctxMenu.addEventListener("click", async (e) => {
+  const btn = e.target.closest("[data-ctx]");
+  if (!btn) return;
+  const t = ctxTarget;
+  hideCtxMenu();
+  if (!t) return;
+  const action = btn.dataset.ctx;
+  try {
+    const j = await api("/admin/api/locate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ share: t.share, path: t.rel, action }),
+    });
+    if (action === "copy") {
+      copyText(j.path);
+      toast("已复制：" + j.path);
+    } else if (action === "reveal") {
+      toast("已在资源管理器中显示：" + t.name);
+    } else {
+      toast("已打开：" + t.name);
+    }
+  } catch (err) {
+    toast("操作失败：" + err.message);
+  }
+});
+
+// 点别处 / Esc / 切窗 / 滚动 → 关闭菜单（capture 阻断底层行的点击，避免误进目录）
+document.addEventListener("click", (e) => {
+  if (ctxMenu.style.display === "none") return;
+  if (e.target.closest("#ctxMenu")) return;
+  e.stopPropagation();
+  hideCtxMenu();
+}, true);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") hideCtxMenu(); });
+window.addEventListener("blur", hideCtxMenu);
+window.addEventListener("scroll", hideCtxMenu, true);
+// 右键菜单自身/空白处：吞掉原生菜单（行内的绑定已 stopPropagation，不会走到这里）
+document.addEventListener("contextmenu", (e) => {
+  if (e.target.closest("#ctxMenu")) { e.preventDefault(); return; }
+  hideCtxMenu();
+});
+
+function copyText(s) {
+  // clipboard API（localhost 是安全上下文）；失败退回隐藏 textarea + execCommand
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(s).catch(() => _copyFallback(s));
+  } else {
+    _copyFallback(s);
+  }
+}
+function _copyFallback(s) {
+  const ta = document.createElement("textarea");
+  ta.value = s;
+  ta.style.cssText = "position:fixed;opacity:0;top:0;left:0";
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand("copy"); } catch (_) {}
+  ta.remove();
+}
 
 /* ─────────── 启动 ─────────── */
 
