@@ -72,7 +72,7 @@
 
 ### 方式一：直接下载 exe（推荐）
 
-从 [Releases](https://github.com/NEUSunYiBo/lan-file-share/releases) 下载 `局域网文件共享.exe`，放到任意目录双击运行：
+从 [Releases](https://github.com/NEUSunYiBo/lan-file-share/releases) 下载 `LanShare.exe`（GitHub 资产名仅支持 ASCII，下载后可自行改名），放到任意目录双击运行：
 
 1. 托盘出现程序图标，服务在本机启动
 2. 浏览器打开管理页 `http://localhost:8000/admin`
