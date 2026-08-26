@@ -2,7 +2,13 @@
 
 零依赖配置的 Windows 局域网文件共享工具：双击运行，自动创建系统托盘与本地网页服务，局域网内手机/电脑直接浏览器访问，上传下载文件与文件夹，无需安装任何客户端。
 
-![screenshot](assets/screenshot.png)
+用户端（手机 / 电脑浏览器直接访问）：
+
+![用户端](assets/screenshot-browse.png)
+
+管理端（共享管理 / 上传设置 / 日志仪表板）：
+
+![管理端](assets/screenshot-admin.png)
 
 ## 功能
 
