@@ -6,6 +6,7 @@
 ![Tests](https://img.shields.io/badge/tests-98%20passed-brightgreen.svg)
 
 一个**零配置、开箱即用**的 Windows 局域网文件共享工具。双击运行后自动驻留系统托盘并启动本地 Web 服务，局域网内的手机、平板、电脑**无需安装任何客户端**，用浏览器即可访问——浏览、下载、上传文件与整个文件夹，并对传输流水做可视化统计分析。
+
 A zero-configuration, out-of-the-box file sharing tool for Windows LANs. Double-click to run, and it automatically stays in the system tray and starts a local web server. Phones, tablets, and computers on the same network can access it from a browser with no client installation — browse, download, and upload files and entire folders, with visual statistical analysis of all transfer activity.
 典型场景：
 
