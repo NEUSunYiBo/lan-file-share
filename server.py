@@ -75,9 +75,10 @@ class AppState:
 class ServerManager:
     """waitress 服务的启动 / 停止 / 重启（供托盘菜单和端口变更使用）。"""
 
-    def __init__(self, app=None, threads=8):
+    def __init__(self, app=None, threads=32):
         self.app = app
-        self.threads = threads  # 并发线程数：多路视频流/下载同时进行
+        # 并发线程数：媒体流走 waitress 异步文件通道不占线程，线程只服务 API 并发
+        self.threads = threads
         self.port = None
         self._server = None
         self._lock = threading.Lock()
@@ -93,7 +94,10 @@ class ServerManager:
         with self._lock:
             if self._server is not None:
                 raise RuntimeError("服务已在运行")
-            srv = create_server(self.app, host="0.0.0.0", port=int(port), threads=self.threads)
+            srv = create_server(
+                self.app, host="0.0.0.0", port=int(port), threads=self.threads,
+                # 默认 120 秒会踢掉暂停/挂起的媒体连接，放宽到 10 分钟避免视频反复断流
+                channel_timeout=600)
             threading.Thread(target=srv.run, name="http-server", daemon=True).start()
             self._server = srv
             self.port = int(port)

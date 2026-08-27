@@ -3,12 +3,152 @@
 import mimetypes
 import os
 import socket
+import unicodedata
+from urllib.parse import quote
 
-from flask import Blueprint, jsonify, request, send_file
+from flask import Blueprint, Response, jsonify, request
+from werkzeug.wsgi import FileWrapper
 
 import auth as auth_mod
 import fs_search
 from mounts import MountRegistry, PathEscapeError
+
+# ── 文件流式响应（下载 / 预览共用）──
+#
+# 不用 send_file(conditional=True) 的原因：werkzeug 对 Range 请求会把响应包成
+# _RangeWrapper，waitress 因此认不出文件对象、走不了 wsgi.file_wrapper 快速
+# 通道，退化为"工作线程按小块读写"的慢路径，且该线程被整条流独占（客户端缓冲
+# 满/暂停时阻塞不释放）。浏览器播放视频会发起多路 Range 请求，线程池（默认仅 8）
+# 被占满后新媒体请求排队，表现为播放间歇性卡死。这里自行解析 Range，用
+# wsgi.file_wrapper（waitress 下即 ReadOnlyFileBasedBuffer）包装，发送由 waitress
+# 异步主循环完成，不占工作线程。
+
+_RANGE_UNSATISFIABLE = "unsatisfiable"  # start 越界 → 416 的哨兵值
+
+
+def _parse_range(header_value, size):
+    """解析 Range: bytes=...（仅支持单段）。
+
+    返回 (start, end)（闭区间）；空值/非法/多段返回 None（回退整文件 200）；
+    start 越界返回 _RANGE_UNSATISFIABLE（调用方返回 416）。
+    """
+    if size <= 0 or not header_value or not header_value.startswith("bytes="):
+        return None
+    spec = header_value[len("bytes="):].strip()
+    if not spec or "," in spec:
+        return None  # 空 / 多段范围：忽略 Range 头，按整文件处理
+    start_s, sep, end_s = spec.partition("-")
+    if not sep:
+        return None
+    start_s, end_s = start_s.strip(), end_s.strip()
+    try:
+        if not start_s:
+            if not end_s:
+                return None
+            suffix = int(end_s)  # bytes=-N：末尾 N 字节（探测 moov 等场景）
+            if suffix <= 0:
+                return None
+            start = max(0, size - suffix)
+            end = size - 1
+        else:
+            start = int(start_s)
+            end = int(end_s) if end_s else size - 1
+            if start < 0 or end < 0:
+                return None
+            end = min(end, size - 1)
+    except ValueError:
+        return None
+    if start >= size or start > end:
+        return _RANGE_UNSATISFIABLE
+    return start, end
+
+
+def _content_disposition(name):
+    """attachment Disposition：纯 ASCII 直接引用；否则 ASCII 兜底 + RFC 5987 filename*。"""
+    try:
+        name.encode("ascii")
+    except UnicodeEncodeError:
+        simple = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
+        # safe 与 RFC 5987 attr-char 一致；中文等以百分号编码传输
+        return "attachment; filename=%s; filename*=UTF-8''%s" % (
+            quote(simple) if simple else "download", quote(name, safe="!#$&+-.^_`|~"))
+    return 'attachment; filename="%s"' % name.replace("\\", "\\\\").replace('"', '\\"')
+
+
+class _LimitedFileReader:
+    """限长文件读取器（无 wsgi.file_wrapper 的退化路径用）。
+
+    最多读 length 字节即返回空串（避免迭代器送出超过 Content-Length 的数据），
+    close() 连带关闭底层文件。
+    """
+
+    def __init__(self, f, length):
+        self._f = f
+        self._remain = length
+
+    def read(self, size=-1):
+        if self._remain <= 0:
+            return b""
+        if size is None or size < 0 or size > self._remain:
+            size = self._remain
+        data = self._f.read(size)
+        self._remain -= len(data)
+        return data
+
+    def close(self):
+        self._f.close()
+
+    def __del__(self):
+        try:
+            self._f.close()
+        except Exception:
+            pass
+
+
+def _file_response(real, mime, size, rng, attachment_name=None):
+    """构造文件流式响应；rng 为 (start, end) 或 None（整文件）。
+
+    waitress 环境下用其提供的 wsgi.file_wrapper（ReadOnlyFileBasedBuffer）裸包装，
+    命中异步快速文件通道；其他环境（如 Flask 测试客户端）退化为 FileWrapper，
+    并以限长读取器保证迭代器不会送出超过 Content-Length 的字节。
+    """
+    if rng:
+        start, end = rng
+        length = end - start + 1
+        status = 206
+    else:
+        start, length, status = 0, size, 200
+
+    f = open(real, "rb")
+    try:
+        if start:
+            f.seek(start)
+        file_wrapper = request.environ.get("wsgi.file_wrapper")
+        if file_wrapper is not None:
+            wrapper = file_wrapper(f)
+        else:
+            wrapper = FileWrapper(_LimitedFileReader(f, length))
+        resp = Response(wrapper, status=status, mimetype=mime,
+                        direct_passthrough=True)
+    except Exception:
+        f.close()
+        raise
+    resp.headers["Content-Length"] = str(length)
+    resp.headers["Accept-Ranges"] = "bytes"
+    resp.headers["Cache-Control"] = "no-cache"
+    if status == 206:
+        resp.headers["Content-Range"] = "bytes %d-%d/%d" % (start, start + length - 1, size)
+    if attachment_name:
+        resp.headers["Content-Disposition"] = _content_disposition(attachment_name)
+    return resp
+
+
+def _range_not_satisfiable(size):
+    """416：Range 越界，按 RFC 7233 携带 Content-Range: bytes */size。"""
+    resp = jsonify({"error": "请求的范围无法满足"})
+    resp.status_code = 416
+    resp.headers["Content-Range"] = "bytes */%d" % size
+    return resp
 
 
 def make_user_bp(state):
@@ -161,7 +301,7 @@ def make_user_bp(state):
 
     @bp.get("/api/download")
     def api_download():
-        """下载文件（流式 + 断点续传）。"""
+        """下载文件（流式 + 断点续传，走 waitress 快速文件通道）。"""
         if not _authorized():
             return _need_auth()
         real, err = _resolve_mounted_file()
@@ -173,16 +313,16 @@ def make_user_bp(state):
             _size = 0
         state.log.record("download", request.remote_addr or "?",
                          os.path.basename(real), _size)
-        return send_file(
-            real,
-            as_attachment=True,
-            download_name=os.path.basename(real),
-            conditional=True,  # 支持 Range 请求
-        )
+        rng = _parse_range(request.headers.get("Range"), _size)
+        if rng == _RANGE_UNSATISFIABLE:
+            return _range_not_satisfiable(_size)
+        mime = mimetypes.guess_type(real)[0] or "application/octet-stream"
+        return _file_response(real, mime, _size, rng,
+                              attachment_name=os.path.basename(real))
 
     @bp.get("/api/preview")
     def api_preview():
-        """在线预览（inline + 正确 Content-Type + Range 流式）。"""
+        """在线预览（inline + 正确 Content-Type + Range 流式，快速文件通道）。"""
         if not _authorized():
             return _need_auth()
         real, err = _resolve_mounted_file()
@@ -195,7 +335,10 @@ def make_user_bp(state):
         # 预览按 (ip, 路径) 去重：视频拖动产生的多次 Range 请求不刷屏
         state.log.record_preview(request.remote_addr or "?",
                                  os.path.basename(real), _size, real)
+        rng = _parse_range(request.headers.get("Range"), _size)
+        if rng == _RANGE_UNSATISFIABLE:
+            return _range_not_satisfiable(_size)
         mime = mimetypes.guess_type(real)[0] or "application/octet-stream"
-        return send_file(real, as_attachment=False, mimetype=mime, conditional=True)
+        return _file_response(real, mime, _size, rng)
 
     return bp

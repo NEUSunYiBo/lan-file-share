@@ -118,6 +118,71 @@ def test_download_and_range(env, tmp_path):
     assert "attachment" not in r.headers.get("Content-Disposition", "")
 
 
+def test_preview_range_streaming(env, tmp_path):
+    """预览 Range 请求：206 + 分片内容 + 正确头部（视频播放/拖动依赖的核心行为）。"""
+    client, state = env
+    f = tmp_path / "movie.mp4"
+    payload = bytes(range(256)) * 80  # 20480 字节
+    f.write_bytes(payload)
+    m = state.registry.add(str(f))
+
+    r = client.get("/api/preview?share=" + m["id"], headers={"Range": "bytes=1000-1999"})
+    assert r.status_code == 206
+    assert r.data == payload[1000:2000]
+    assert r.headers["Content-Range"] == "bytes 1000-1999/%d" % len(payload)
+    assert r.headers["Content-Length"] == "1000"
+    assert r.headers["Accept-Ranges"] == "bytes"
+    assert "attachment" not in r.headers.get("Content-Disposition", "")
+
+    # 开区间 bytes=N-：到文件尾（浏览器播放时的常规请求形式）
+    r = client.get("/api/preview?share=" + m["id"], headers={"Range": "bytes=20000-"})
+    assert r.status_code == 206
+    assert r.data == payload[20000:]
+    assert r.headers["Content-Range"].startswith("bytes 20000-20479/")
+
+    # 后缀 bytes=-N：末尾 N 字节
+    r = client.get("/api/preview?share=" + m["id"], headers={"Range": "bytes=-100"})
+    assert r.status_code == 206
+    assert r.data == payload[-100:]
+    assert r.headers["Content-Range"].startswith("bytes %d-" % (len(payload) - 100))
+
+
+def test_range_unsatisfiable_416(env, tmp_path):
+    """Range 起点越界 → 416，并按 RFC 7233 携带 Content-Range: bytes */size。"""
+    client, state = env
+    f = tmp_path / "v.mp4"
+    f.write_bytes(b"\x00" * 64)
+    m = state.registry.add(str(f))
+    r = client.get("/api/download?share=" + m["id"], headers={"Range": "bytes=100-"})
+    assert r.status_code == 416
+    assert r.headers["Content-Range"] == "bytes */64"
+
+
+def test_range_malformed_fallback_200(env, tmp_path):
+    """非法/多段 Range 头：忽略并回退整文件 200，不报错。"""
+    client, state = env
+    f = tmp_path / "v.mp4"
+    payload = b"\x01" * 32
+    f.write_bytes(payload)
+    m = state.registry.add(str(f))
+    for bad in ("bytes=1,2-3", "items=0-1", "bytes=abc", "bytes=-"):
+        r = client.get("/api/download?share=" + m["id"], headers={"Range": bad})
+        assert r.status_code == 200, bad
+        assert r.data == payload, bad
+
+
+def test_download_chinese_filename_disposition(env, tmp_path):
+    """中文文件名下载：Content-Disposition 携带 RFC 5987 filename*。"""
+    client, state = env
+    f = tmp_path / "电影.mp4"
+    f.write_bytes(b"\x00" * 16)
+    m = state.registry.add(str(f))
+    r = client.get("/api/download?share=" + m["id"])
+    cd = r.headers["Content-Disposition"]
+    assert cd.startswith("attachment")
+    assert "filename*=UTF-8''" in cd
+
+
 def test_preview_content_type(env, tmp_path):
     client, state = env
     f = tmp_path / "说明.txt"
