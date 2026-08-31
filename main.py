@@ -46,12 +46,28 @@ def _ensure_single_instance():
         sys.exit(0)
 
 
+def _setup_file_log():
+    r"""日志落文件：windowed exe 无控制台，stderr 里的报错全部不可见；
+    落到 %APPDATA%\LanShare\server.log（滚动，上限 1MB x1）便于排障。"""
+    try:
+        from logging.handlers import RotatingFileHandler
+        base = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "LanShare")
+        os.makedirs(base, exist_ok=True)
+        h = RotatingFileHandler(os.path.join(base, "server.log"),
+                                maxBytes=1_000_000, backupCount=1, encoding="utf-8")
+        h.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+        logging.getLogger().addHandler(h)
+    except Exception as e:
+        logging.getLogger("lan_share").warning("文件日志初始化失败: %s", e)
+
+
 def main():
     _ensure_single_instance()
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+    _setup_file_log()
     log = logging.getLogger("lan_share")
 
     cfg = config_mod.load()

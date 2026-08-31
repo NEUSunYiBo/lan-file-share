@@ -27,6 +27,64 @@ NAME = "局域网文件共享"
 ICON = os.path.join(BASE, "app.ico")
 
 
+def _python_tcl_dir():
+    r"""返回构建 Python 实际加载的 tcl86t.dll 所在目录（与本 Python 配套的正确版本）。
+
+    import _tkinter 会让 Windows 按本 Python 的 DLL 搜索规则加载 tcl86t.dll，
+    GetModuleHandle 取其真实路径——无论 PATH 被怎样污染，这个目录永远是配套版本。
+    """
+    if os.name != "nt":
+        return None
+    try:
+        import _tkinter  # noqa: F401  仅为确保 tcl86t.dll 已加载
+        import ctypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        # HMODULE 是指针宽度，必须显式声明 restype，否则被截断成 32 位导致句柄无效
+        k32.GetModuleHandleW.restype = ctypes.c_void_p
+        h = k32.GetModuleHandleW("tcl86t.dll")
+        if not h:
+            return None
+        buf = ctypes.create_unicode_buffer(260)
+        if not k32.GetModuleFileNameW(ctypes.c_void_p(h), buf, 260):
+            return None
+        return os.path.dirname(buf.value)
+    except Exception:
+        return None
+
+
+def _sanitize_build_path():
+    r"""构建期 PATH 净化：剔除携带"别家 Tcl/Tk DLL"的目录。
+
+    PyInstaller 沿 PATH 解析 _tkinter.pyd 的依赖。若 PATH 里混入其他来源的
+    tcl86t.dll（如 conda 的 pkgs 缓存、其他环境），且排在配套目录之前，
+    会打进与 _tcl_data 脚本库版本不匹配的 DLL，运行时 tkinter 报
+    "version conflict for package Tcl"，管理端「添加文件夹/文件」的
+    选择窗口直接 500。
+
+    注意：只剔除 tcl86t.dll/tk86t.dll 携带者（配套目录除外），不动其他目录
+    ——sqlite3/libcrypto 等仍需从 PATH 上的 conda Library\bin 正常解析，
+    剔除整个 conda 根会连正确 DLL 一起丢掉。
+    """
+    right = _python_tcl_dir()
+    if not right:
+        # 定位不到配套目录时不动 PATH：宁可维持原状，也不冒误伤风险
+        print("警告：未能定位配套 Tcl/Tk 目录，本次不净化 PATH")
+        return os.environ.get("PATH", "")
+    right_n = os.path.normcase(os.path.normpath(right))
+    print("Tcl/Tk 配套目录（保留）: %s" % right)
+    kept, dropped = [], []
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        if not d:
+            continue
+        has_tk = (os.path.isfile(os.path.join(d, "tcl86t.dll"))
+                  or os.path.isfile(os.path.join(d, "tk86t.dll")))
+        is_right = os.path.normcase(os.path.normpath(d)) == right_n
+        (dropped if has_tk and not is_right else kept).append(d)
+    for d in dropped:
+        print("PATH 净化（剔除 Tcl/Tk 污染源）: -%s" % d)
+    return os.pathsep.join(kept)
+
+
 def make_icon(force=False):
     """生成默认 exe 图标（蓝底白色双向箭头）。
 
@@ -83,7 +141,9 @@ def main():
     args.append("--windowed" if "--console" not in sys.argv else "--console")
 
     print("开始打包（可能需要一两分钟）…")
-    r = subprocess.run(args, cwd=BASE)
+    env = dict(os.environ)
+    env["PATH"] = _sanitize_build_path()
+    r = subprocess.run(args, cwd=BASE, env=env)
     if r.returncode != 0:
         sys.exit("打包失败，退出码 %s" % r.returncode)
 

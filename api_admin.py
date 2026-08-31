@@ -194,7 +194,14 @@ def make_admin_bp(state, service=None):
 
     @bp.post("/admin/api/pick-folder")
     def api_pick_folder():
-        paths = _pick_paths("folder")
+        try:
+            paths = _pick_paths("folder")
+        except Exception as e:
+            # tkinter/Tcl 初始化失败等：给出具体原因而非笼统 500，
+            # 便于定位（如打包进了版本不匹配的 tcl86t.dll）
+            log.exception("系统选择窗口打开失败")
+            msg = str(e)
+            return jsonify({"error": "系统选择窗口打开失败：" + (msg[:200] + "…" if len(msg) > 200 else msg)}), 400
         return jsonify({"ok": bool(paths), "paths": paths})
 
     @bp.post("/admin/api/locate")
@@ -250,7 +257,12 @@ def make_admin_bp(state, service=None):
 
     @bp.post("/admin/api/pick-files")
     def api_pick_files():
-        paths = _pick_paths("files")
+        try:
+            paths = _pick_paths("files")
+        except Exception as e:
+            log.exception("系统选择窗口打开失败")
+            msg = str(e)
+            return jsonify({"error": "系统选择窗口打开失败：" + (msg[:200] + "…" if len(msg) > 200 else msg)}), 400
         return jsonify({"ok": bool(paths), "paths": paths})
 
     @bp.post("/admin/api/mount")

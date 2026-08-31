@@ -408,6 +408,22 @@ def test_admin_remote_403(env):
                        json={"path": "C:/"}).status_code == 403
 
 
+def test_pick_dialog_error_surfaced_as_400(env, monkeypatch):
+    """选择窗口打不开时返回 400 + 具体原因，而不是笼统的 500。"""
+    import api_admin
+
+    def boom(mode):
+        raise RuntimeError("tk 挂了")
+
+    monkeypatch.setattr(api_admin, "_pick_paths", boom)
+    client, _ = env
+    for ep in ("/admin/api/pick-folder", "/admin/api/pick-files"):
+        r = client.post(ep)
+        assert r.status_code == 400
+        assert "tk 挂了" in r.json["error"]
+        assert "系统选择窗口打开失败" in r.json["error"]
+
+
 def test_admin_pages(env):
     client, _ = env
     assert client.get("/").status_code == 200
