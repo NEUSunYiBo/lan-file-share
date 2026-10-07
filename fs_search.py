@@ -11,7 +11,7 @@ MAX_RESULTS = 500
 
 
 def search_mounts(state, q, share_id=None, user_view=False):
-    """在挂载点内递归搜索文件名，返回 [{share, share_name, path, name, size, mtime, is_dir}]。
+    """在挂载点内递归搜索文件名，返回 [{share, share_name, path, name, size, ctime, is_dir}]。
 
     state 为 server.AppState；share_id 非空时只搜该挂载（"本共享"）。
     排除项（取消共享的子路径）在两种视图下都跳过：用户端本就不可见，
@@ -37,7 +37,7 @@ def search_mounts(state, q, share_id=None, user_view=False):
                 results.append({
                     "share": m["id"], "share_name": m["name"],
                     "path": "", "name": os.path.basename(root),
-                    "size": st.st_size, "mtime": int(st.st_mtime), "is_dir": False,
+                    "size": st.st_size, "ctime": int(st.st_ctime), "is_dir": False,
                 })
             continue
 
@@ -69,7 +69,7 @@ def search_mounts(state, q, share_id=None, user_view=False):
                     "share": m["id"], "share_name": m["name"],
                     "path": rel, "name": name,
                     "size": 0 if os.path.isdir(real) else st.st_size,
-                    "mtime": int(st.st_mtime), "is_dir": os.path.isdir(real),
+                    "ctime": int(st.st_ctime), "is_dir": os.path.isdir(real),
                 })
                 if len(results) >= MAX_RESULTS:
                     return results

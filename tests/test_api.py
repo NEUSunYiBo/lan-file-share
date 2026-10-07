@@ -84,6 +84,54 @@ def test_list_unknown_share_404(env):
     assert client.get("/api/list?share=nope").status_code == 404
 
 
+# ─────────────── 时间字段：返回创建时间（Windows 上 st_ctime） ───────────────
+
+def _touch_mtime_only(path, ts=1000000000):
+    """只改写修改时间（Windows 上不影响创建时间），用于把两者区分开。"""
+    os.utime(path, (ts, ts))
+
+
+def test_list_returns_creation_time(env, tmp_path):
+    """/api/list 返回创建时间而非修改时间：改写 mtime 后 ctime 仍为"当下"。"""
+    client, state = env
+    root = tmp_path / "share"
+    root.mkdir()
+    f = root / "视频.mp4"
+    f.write_bytes(b"\x00" * 8)
+    _touch_mtime_only(f)   # mtime → 2001 年
+    m = state.registry.add(str(root))
+
+    items = client.get("/api/list?share=" + m["id"]).json
+    it = items[0]
+    assert "ctime" in it and "mtime" not in it
+    assert it["ctime"] == int(os.stat(f).st_ctime)
+    assert it["ctime"] > 1_600_000_000      # 是当下（创建时间），不是被改写的 mtime
+    # 单文件挂载同样返回创建时间
+    mf = state.registry.add(str(root / "视频.mp4"))
+    itf = client.get("/api/list?share=" + mf["id"]).json[0]
+    assert itf["ctime"] == int(os.stat(f).st_ctime) and "mtime" not in itf
+
+
+def test_admin_list_and_search_return_creation_time(env, tmp_path):
+    """/admin/api/list 与两种搜索接口同样只给创建时间。"""
+    client, state = env
+    root = tmp_path / "share"
+    root.mkdir()
+    f = root / "录像.mkv"
+    f.write_bytes(b"\x00" * 8)
+    _touch_mtime_only(f)
+    m = state.registry.add(str(root))
+    want = int(os.stat(f).st_ctime)
+
+    it = client.get("/admin/api/list?share=" + m["id"]).json[0]
+    assert it["ctime"] == want and "mtime" not in it
+
+    for ep in ("/api/search?q=录像", "/admin/api/search?q=录像"):
+        res = client.get(ep).json
+        assert res and res[0]["ctime"] == want, ep
+        assert "mtime" not in res[0], ep
+
+
 def test_list_path_escape_403(env, tmp_path):
     client, state = env
     m = state.registry.add(str(tmp_path))

@@ -217,8 +217,8 @@ html[data-theme="dark"] .sep{color:#3a4a68}
           <option value="name-desc">名称 ↓</option>
           <option value="size-asc">大小 ↑</option>
           <option value="size-desc">大小 ↓</option>
-          <option value="mtime-desc">最新优先</option>
-          <option value="mtime-asc">最旧优先</option>
+          <option value="ctime-desc">最新优先</option>
+          <option value="ctime-asc">最旧优先</option>
         </select>
         <select id="searchScope" title="搜索范围">
           <option value="local">本目录</option>
@@ -591,7 +591,7 @@ function sortItems(items) {
     if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
     let r;
     if (field === "size") r = (a.size || 0) - (b.size || 0);
-    else if (field === "mtime") r = (a.mtime || 0) - (b.mtime || 0);
+    else if (field === "ctime") r = (a.ctime || 0) - (b.ctime || 0);
     else r = a.name.localeCompare(b.name, "zh-CN");
     return r * sign;
   });
@@ -650,7 +650,7 @@ function renderList(items, opts) {
       '<span class="ficon ' + kind + '">' + (ICONS[kind] || ICONS.file) + "</span>" +
       nameHtml +
       '<span class="fsize">' + (it.is_dir ? "—" : humanSize(it.size)) + "</span>" +
-      '<span class="fmtime">' + fmtTime(it.mtime) + "</span>" +
+      '<span class="fmtime">' + fmtTime(it.ctime) + "</span>" +
       '<span class="factions">' +
         (it.is_dir ? "" :
           '<button class="act pv">预览</button><button class="act dl">下载</button>') +
@@ -1119,7 +1119,9 @@ async function init() {
 
 $("#searchBtn").onclick = runSearch;
 // 排序切换：立即按新顺序重渲当前列表（含全局搜索结果），偏好存 localStorage
-$("#sortSel").value = localStorage.getItem("lan_share_sort") || "name-asc";
+// 旧版本偏好 mtime-* → ctime-*（排序依据已改为创建时间），避免读取失效后静默退回名称排序
+const savedSort = localStorage.getItem("lan_share_sort") || "name-asc";
+$("#sortSel").value = { "mtime-desc": "ctime-desc", "mtime-asc": "ctime-asc" }[savedSort] || savedSort;
 $("#sortSel").addEventListener("change", () => {
   localStorage.setItem("lan_share_sort", $("#sortSel").value);
   if (state.search && state.search.mode === "global" && state.search.results) {

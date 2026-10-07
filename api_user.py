@@ -237,7 +237,7 @@ def make_user_bp(state):
             return jsonify([{
                 "name": os.path.basename(real),
                 "size": st.st_size,
-                "mtime": int(st.st_mtime),
+                "ctime": int(st.st_ctime),
                 "is_dir": False,
             }])
 
@@ -254,7 +254,7 @@ def make_user_bp(state):
                         entries.append({
                             "name": entry.name,
                             "size": 0 if entry.is_dir() else st.st_size,
-                            "mtime": int(st.st_mtime),
+                            "ctime": int(st.st_ctime),
                             "is_dir": entry.is_dir(),
                         })
                     except OSError:
@@ -274,7 +274,7 @@ def make_user_bp(state):
         """全局搜索：在挂载点内递归按文件名搜索（不区分大小写的子串匹配）。
 
         query: q=关键字（必填）；share=挂载id（可选，限定单个挂载）
-        返回最多 500 条：[{share, share_name, path, name, size, mtime, is_dir}]
+        返回最多 500 条：[{share, share_name, path, name, size, ctime, is_dir}]
         """
         if not _authorized():
             return _need_auth()

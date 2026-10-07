@@ -145,7 +145,7 @@ def make_admin_bp(state, service=None):
                     entries.append({
                         "name": entry.name,
                         "size": 0 if entry.is_dir() else st.st_size,
-                        "mtime": int(st.st_mtime),
+                        "ctime": int(st.st_ctime),
                         "is_dir": entry.is_dir(),
                         "excluded": state.registry.is_excluded(mount["id"], rel_entry),
                     })

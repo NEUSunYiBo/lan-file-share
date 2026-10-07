@@ -303,8 +303,8 @@ html[data-theme="dark"] .dash-recent .tag.preview{background:#2e2413;color:#ffd4
           <option value="name-desc">名称 ↓</option>
           <option value="size-asc">大小 ↑</option>
           <option value="size-desc">大小 ↓</option>
-          <option value="mtime-desc">最新优先</option>
-          <option value="mtime-asc">最旧优先</option>
+          <option value="ctime-desc">最新优先</option>
+          <option value="ctime-asc">最旧优先</option>
         </select>
         <select id="searchScope" title="搜索范围">
           <option value="local">本目录</option>
@@ -629,7 +629,7 @@ async function loadList() {
   if (!mount) { st.items = []; renderList(); return; }
   // 单文件挂载：不能排除（根即文件），只显示自身
   if (mount.type === "file") {
-    st.items = [{ name: mount.name, size: 0, mtime: 0, is_dir: false, excluded: false, single: true }];
+    st.items = [{ name: mount.name, size: 0, ctime: 0, is_dir: false, excluded: false, single: true }];
     renderList();
     return;
   }
@@ -679,7 +679,7 @@ function sortItems(items) {
     if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
     let r;
     if (field === "size") r = (a.size || 0) - (b.size || 0);
-    else if (field === "mtime") r = (a.mtime || 0) - (b.mtime || 0);
+    else if (field === "ctime") r = (a.ctime || 0) - (b.ctime || 0);
     else r = a.name.localeCompare(b.name, "zh-CN");
     return r * sign;
   });
@@ -749,7 +749,7 @@ function makeRow(it, rel, mount) {
     '<span class="fname" title="' + esc(it.name) + '">' + esc(it.name) + "</span>" +
     (it.excluded ? '<span class="tag-ex">已排除</span>' : "") +
     '<span class="fsize">' + (it.is_dir ? "—" : fmtSize(it.size)) + '</span>' +
-    '<span class="fmtime">' + fmtDate(it.mtime) + "</span>" +
+    '<span class="fmtime">' + fmtDate(it.ctime) + "</span>" +
     '<span class="acts">' + acts + "</span>";
 
   // 目录点击进入（排除的目录管理员仍可进入查看）；文件左键 = 系统默认程序打开
@@ -881,7 +881,9 @@ $("#refreshBtn").onclick = () => {
 };
 
 // 排序切换：立即按新顺序重渲当前列表（含搜索结果），偏好存 localStorage（与用户端共享）
-$("#sortSel").value = localStorage.getItem("lan_share_sort") || "name-asc";
+// 旧版本偏好 mtime-* → ctime-*（排序依据已改为创建时间），避免读取失效后静默退回名称排序
+const savedSort = localStorage.getItem("lan_share_sort") || "name-asc";
+$("#sortSel").value = { "mtime-desc": "ctime-desc", "mtime-asc": "ctime-asc" }[savedSort] || savedSort;
 $("#sortSel").addEventListener("change", () => {
   localStorage.setItem("lan_share_sort", $("#sortSel").value);
   renderList();
