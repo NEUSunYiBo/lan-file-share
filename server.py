@@ -29,6 +29,16 @@ else:
 
 LOCAL_ADDRS = ("127.0.0.1", "::1")
 
+# ── 上传请求体大小上限 ──
+# waitress 的 max_request_body_size 默认为 1073741824（恰好 1GB），且判定条件是
+# content_length >= 上限 —— 任何 ≥1GB 的上传在解析请求头阶段就被回 413
+# （请求根本到不了 Flask），表现为"超过 1GB 的文件无法共享/传输"。
+# 这里显式放开到 1 PiB，等同于不设人为上限（waitress 要求该参数必须是 int，
+# 不接受 None；1 PiB 远超任何真实文件，仅作为防御性兜底）。
+# 说明：请求体不会整体驻留内存——werkzeug 解析 multipart 时会把超过阈值的
+# 文件分片溢写到磁盘临时文件，内存占用与文件大小无关。
+MAX_UPLOAD_BYTES = 1024 ** 5  # 1 PiB
+
 
 class AppState:
     """进程内共享状态：配置、挂载表、token 存储、传输日志。"""
@@ -97,7 +107,9 @@ class ServerManager:
             srv = create_server(
                 self.app, host="0.0.0.0", port=int(port), threads=self.threads,
                 # 默认 120 秒会踢掉暂停/挂起的媒体连接，放宽到 10 分钟避免视频反复断流
-                channel_timeout=600)
+                channel_timeout=600,
+                # 解除 waitress 默认 1GB 请求体上限（超大文件上传的关键，见常量注释）
+                max_request_body_size=MAX_UPLOAD_BYTES)
             threading.Thread(target=srv.run, name="http-server", daemon=True).start()
             self._server = srv
             self.port = int(port)
@@ -128,8 +140,10 @@ class ServerManager:
 def create_app(state, service=None):
     """Flask 应用工厂。"""
     app = Flask(__name__)
-    # 请求体上限 2GB（下载响应不受影响，仅限制上传等请求体）
-    app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024
+    # 请求体大小不做限制（None = 不限制，Flask 默认值）：原先的 2GB 上限在
+    # 解除 waitress 1GB 限制后会成为新的瓶颈，会挡住 >2GB 的文件上传。
+    # 真正的大小约束统一由 WSGI 服务器层控制（见 MAX_UPLOAD_BYTES）。
+    app.config["MAX_CONTENT_LENGTH"] = None
 
     # ── CORS：聚合页需要跨服务器调用 /api/* ──
     @app.after_request
