@@ -5,6 +5,8 @@
     python build_exe.py --console           # 控制台模式（显示日志，便于排错）
     python build_exe.py --icon myapp.ico    # 用自定义图标打包（任意路径）
     python build_exe.py --regen-icon        # 强制重新生成默认图标（覆盖 app.ico）
+    python build_exe.py --distpath out_dir  # 输出到其他目录（默认 dist/；
+                                            # 旧版 exe 正在运行、dist/ 被占用时用）
 
 图标逻辑：项目根目录已有 app.ico 时直接使用（放你自己的图标即可，不会被覆盖）；
 不存在时才自动生成默认图标（蓝底白色双向箭头）。图标同时嵌入 exe 内部资源，
@@ -53,7 +55,7 @@ def _python_tcl_dir():
 
 
 def _sanitize_build_path():
-    r"""构建期 PATH 净化：剔除携带"别家 Tcl/Tk DLL"的目录。
+    r"""构建期 PATH 净化：剔除携带"别家 Tcl/Tk DLL"的目录，并确保配套 DLL 目录在列。
 
     PyInstaller 沿 PATH 解析 _tkinter.pyd 的依赖。若 PATH 里混入其他来源的
     tcl86t.dll（如 conda 的 pkgs 缓存、其他环境），且排在配套目录之前，
@@ -64,6 +66,11 @@ def _sanitize_build_path():
     注意：只剔除 tcl86t.dll/tk86t.dll 携带者（配套目录除外），不动其他目录
     ——sqlite3/libcrypto 等仍需从 PATH 上的 conda Library\bin 正常解析，
     剔除整个 conda 根会连正确 DLL 一起丢掉。
+
+    同时确保配套 DLL 目录（如 Library\bin）在 PATH 中：conda 系 Python 的
+    sqlite3.dll / libexpat / liblzma / ffi-8 等原生依赖都在该目录。若构建
+    shell 未激活 conda（PATH 里没有它），PyInstaller 会因找不到依赖而漏打包
+    ——exe 照样构建成功，但运行到日志/选择窗口等功能时因缺 DLL 失败。
     """
     right = _python_tcl_dir()
     if not right:
@@ -82,6 +89,9 @@ def _sanitize_build_path():
         (dropped if has_tk and not is_right else kept).append(d)
     for d in dropped:
         print("PATH 净化（剔除 Tcl/Tk 污染源）: -%s" % d)
+    if not any(os.path.normcase(os.path.normpath(d)) == right_n for d in kept):
+        print("PATH 补充（加入配套 DLL 目录）: +%s" % right)
+        kept.insert(0, right)
     return os.pathsep.join(kept)
 
 
@@ -123,10 +133,20 @@ def main():
     # 用项目内的 app.ico：尊重已有文件，仅缺失或 --regen-icon 时生成
     make_icon(force="--regen-icon" in sys.argv)
 
+    # 可选输出目录：默认 dist/。旧版 exe 正在运行时 dist 下的产物被系统锁定
+    # 无法覆盖，此参数可把新构建输出到其他目录（不影响默认行为）。
+    distpath = "dist"
+    if "--distpath" in sys.argv:
+        i = sys.argv.index("--distpath")
+        if i + 1 >= len(sys.argv):
+            sys.exit("--distpath 需要跟输出目录，例如: --distpath dist_release")
+        distpath = sys.argv[i + 1]
+
     args = [
         sys.executable, "-m", "PyInstaller",
         "--noconfirm", "--clean", "--onefile",
         "--name", NAME,
+        "--distpath", distpath,
         # 用户端 / 管理端页面打进去（运行时解压到临时目录）
         "--add-data", os.path.join("pages") + os.pathsep + "pages",
         # 图标嵌入内部资源（_MEIPASS）：托盘图标和 /favicon.ico 运行时从内部读取，
@@ -147,7 +167,7 @@ def main():
     if r.returncode != 0:
         sys.exit("打包失败，退出码 %s" % r.returncode)
 
-    exe = os.path.join(BASE, "dist", NAME + ".exe")
+    exe = os.path.join(BASE, distpath, NAME + ".exe")
     size_mb = os.path.getsize(exe) / 1024 / 1024
     print()
     print("打包完成: %s（%.1f MB）" % (exe, size_mb))

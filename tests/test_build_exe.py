@@ -48,3 +48,21 @@ def test_sanitize_fallback_keeps_path_when_tcl_dir_unknown(monkeypatch, tmp_path
     monkeypatch.setenv("PATH", str(d))
     parts = [_norm(p) for p in build_exe._sanitize_build_path().split(os.pathsep) if p]
     assert _norm(str(d)) in parts
+
+
+def test_sanitize_ensures_paired_dll_dir_in_path(monkeypatch, tmp_path):
+    """配套 DLL 目录不在 PATH 时自动补入。
+
+    conda 系 Python 的 sqlite3.dll / libexpat / liblzma / ffi-8 等原生依赖都放在
+    配套目录（如 Library\\bin）。构建 shell 未激活 conda 时 PATH 里没有它，
+    PyInstaller 会漏收集这些 DLL——exe 构建成功但运行时报缺 DLL，必须由构建
+    脚本兜底补入。
+    """
+    right = _mk_tcl_dir(tmp_path)          # 配套目录（模拟 Library\bin）
+    other = tmp_path / "plain"
+    other.mkdir()
+    monkeypatch.setattr(build_exe, "_python_tcl_dir", lambda: str(right))
+    monkeypatch.setenv("PATH", str(other))  # PATH 中不含配套目录
+    parts = [_norm(p) for p in build_exe._sanitize_build_path().split(os.pathsep) if p]
+    assert _norm(str(right)) in parts       # 已补入
+    assert _norm(str(other)) in parts       # 原有目录不丢
